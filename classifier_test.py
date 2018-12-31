@@ -20,8 +20,8 @@ config.gpu_options.per_process_gpu_memory_fraction = 0.3
 set_session(tf.Session(config=config)) """
 
 # set parameters:
-max_features = 5000
-maxlen = 400
+max_features = 100000
+maxlen = 100000
 batch_size = 32
 embedding_dims = 300
 filters = 250
@@ -38,15 +38,15 @@ def transform_and_save(input_file):
     is_neuro = []
 
     # Neuroscience MeSH-terms.
-    reg = re.compile(r"(A08*|A11.650*|A08.637*|A11.671*|A08.675*|C10*|F01*|F02*|F03*|F04*)")
+    reg = re.compile(r"(D009420|D009457|D009474|D009422|D001520|D011579|D001523|D004191)")
 
     for article in tqdm(data, desc="Grabbing abstracts and mesh terms"):
         abstract_parts = []
         abstracts.append("\n".join([x["text"] for x in article["abstract"]]))
-        is_neuro.append(False)
+        is_neuro.append("no")
         for mesh_term in article["mesh_list"]:
             if reg.match(mesh_term["mesh_id"]):
-                is_neuro[-1] = True
+                is_neuro[-1] = "yes"
                 break
 
     del data # Release the huge chunk of memory, ugly. TODO: structure code properly.
@@ -63,23 +63,45 @@ def transform_and_save(input_file):
     label_encoder = LabelEncoder()
     is_neuro = label_encoder.fit_transform(is_neuro)
     print("is_neuro shape", is_neuro.shape)
+    print("is_neuro label_encoder", is_neuro)
+    print("is_neuro class labels", label_encoder.classes_)
 
     one_hot_encoder = OneHotEncoder(sparse=False)
     is_neuro = one_hot_encoder.fit_transform(is_neuro.reshape(-1,1))
-    print("is_neuro 1hot", is_neuro.shape)
+    print("is_neuro 1hot", is_neuro)
 
-    with open("../abstracts_dump", "w") as f:
+    with open("../abstracts_dump", "wb") as f:
         pickle.dump(abstracts, f)
     
-    with open("../is_neuro_dump", "w") as f:
+    with open("../is_neuro_dump", "wb") as f:
         pickle.dump(is_neuro, f)
+    
+    sys.exit()
+
+def load_model():
+    
+    with open("../abstracts_dump", "rb") as f:
+        abstracts = pickle.load(f)
+    
+    with open("../is_neuro_dump", "rb") as f:
+        is_neuro = pickle.load(f)
+
+    return (abstracts, is_neuro)
 
 transform_and_save(sys.argv[1])
-sys.exit()
+
+(abstracts, is_neuro) = load_model()
+
+print(abstracts.shape)
+print(abstracts[0])
+print(is_neuro.shape)
+print(is_neuro)
 
 print('Build model...')
 
-#Let's define the inputs
+abstracts = sequence.pad_sequences(abstracts, maxlen=maxlen)
+
+# Let's define the inputs
 x = Input(shape=(maxlen,))
 
 # we start off with an efficient embedding layer which maps
@@ -105,7 +127,7 @@ model.compile(loss='categorical_crossentropy',
               metrics=['accuracy'])
 
 
-model.fit(x_train, y_train,
+model.fit(abstracts, is_neuro,
           batch_size=batch_size,
           epochs=epochs,
-          validation_data=(x_test, y_test))
+          validation_split=0.2)
