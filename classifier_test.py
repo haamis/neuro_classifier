@@ -20,8 +20,8 @@ config.gpu_options.per_process_gpu_memory_fraction = 0.3
 set_session(tf.Session(config=config)) """
 
 # set parameters:
-max_features = 100000
-maxlen = 100000
+max_features = 50000
+maxlen = 50000
 batch_size = 32
 embedding_dims = 300
 filters = 250
@@ -56,7 +56,8 @@ def transform_and_save(input_file):
 
     #input("check ram")
 
-    vectorizer = CountVectorizer(max_features=100000, binary=True, ngram_range=(1,1))
+    print("Running vectorizer.")
+    vectorizer = CountVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
     print("abstract shape:", abstracts.shape)
 
@@ -88,7 +89,7 @@ def load_model():
 
     return (abstracts, is_neuro)
 
-transform_and_save(sys.argv[1])
+#transform_and_save(sys.argv[1])
 
 (abstracts, is_neuro) = load_model()
 
@@ -97,9 +98,9 @@ print(abstracts[0])
 print(is_neuro.shape)
 print(is_neuro)
 
-print('Build model...')
+#print('Build model...')
 
-abstracts = sequence.pad_sequences(abstracts, maxlen=maxlen)
+#abstracts = sequence.pad_sequences(abstracts.toarray(), maxlen=abstracts.shape[0])
 
 # Let's define the inputs
 x = Input(shape=(maxlen,))
