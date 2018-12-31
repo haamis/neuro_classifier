@@ -132,3 +132,6 @@ model.fit(abstracts, is_neuro,
           batch_size=batch_size,
           epochs=epochs,
           validation_split=0.2)
+
+with open("../model_dump", "wb") as f:
+        pickle.dump(model, f)
