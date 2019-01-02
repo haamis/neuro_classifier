@@ -28,7 +28,7 @@ filters = 250
 kernel_size = 3
 epochs = 2
 
-def transform_and_save(input_file):
+def transform(input_file):
     print("Reading input file..")
 
     with open("./" + input_file) as f:
@@ -54,8 +54,6 @@ def transform_and_save(input_file):
     print("\n",abstracts[0])
     print(is_neuro[0])
 
-    #input("check ram")
-
     print("Running vectorizer.")
     vectorizer = CountVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
@@ -71,67 +69,73 @@ def transform_and_save(input_file):
     is_neuro = one_hot_encoder.fit_transform(is_neuro.reshape(-1,1))
     print("is_neuro 1hot", is_neuro)
 
-    with open("../abstracts_dump", "wb") as f:
-        pickle.dump(abstracts, f)
-    
-    with open("../is_neuro_dump", "wb") as f:
-        pickle.dump(is_neuro, f)
-    
-    sys.exit()
-
-def load_model():
-    
-    with open("../abstracts_dump", "rb") as f:
-        abstracts = pickle.load(f)
-    
-    with open("../is_neuro_dump", "rb") as f:
-        is_neuro = pickle.load(f)
-
     return (abstracts, is_neuro)
 
-#transform_and_save(sys.argv[1])
 
-(abstracts, is_neuro) = load_model()
+def build_model():
+    print(abstracts.shape)
+    print(abstracts[0])
+    print(is_neuro.shape)
+    print(is_neuro)
 
-print(abstracts.shape)
-print(abstracts[0])
-print(is_neuro.shape)
-print(is_neuro)
+    #abstracts = sequence.pad_sequences(abstracts.toarray(), maxlen=abstracts.shape[0])
 
-#print('Build model...')
+    # Let's define the inputs
+    x = Input(shape=(maxlen,))
 
-#abstracts = sequence.pad_sequences(abstracts.toarray(), maxlen=abstracts.shape[0])
+    # we start off with an efficient embedding layer which maps
+    # our vocab indices into embedding_dims dimensions
 
-# Let's define the inputs
-x = Input(shape=(maxlen,))
+    embedding_layer = Embedding(max_features,
+                        embedding_dims,
+                        input_length=maxlen)
 
-# we start off with an efficient embedding layer which maps
-# our vocab indices into embedding_dims dimensions
+    embeddings = embedding_layer(x)
 
-embedding_layer = Embedding(max_features,
-                    embedding_dims,
-                    input_length=maxlen)
+    conv_layer = Conv1D(filters, kernel_size, padding='valid', activation='relu', strides=1)
+    conv_result = conv_layer(embeddings)
+    pooled = (GlobalMaxPooling1D())(conv_result) 
 
-embeddings = embedding_layer(x)
+    # We add a vanilla hidden layer:
+    out = Dense(2, activation='softmax')(pooled)
 
-conv_layer = Conv1D(filters, kernel_size, padding='valid', activation='relu', strides=1)
-conv_result = conv_layer(embeddings)
-pooled = (GlobalMaxPooling1D())(conv_result) 
+    model = Model(x, out)
 
-# We add a vanilla hidden layer:
-out = Dense(2, activation='softmax')(pooled)
+    model.compile(loss='categorical_crossentropy',
+                optimizer='adam',
+                metrics=['accuracy'])
 
-model = Model(x, out)
+    print(model.summary())
 
-model.compile(loss='categorical_crossentropy',
-              optimizer='adam',
-              metrics=['accuracy'])
+    model.fit(abstracts, is_neuro,
+            batch_size=batch_size,
+            epochs=epochs,
+            validation_split=0.2)
+
+    return model
 
 
-model.fit(abstracts, is_neuro,
-          batch_size=batch_size,
-          epochs=epochs,
-          validation_split=0.2)
+def dump_data(file_name, dump_data):
 
-with open("../model_dump", "wb") as f:
-        pickle.dump(model, f)
+    with open(file_name, "wb") as f:
+            pickle.dump(dump_data, f)
+
+
+def load_data(file_name):
+    
+    with open(file_name, "rb") as f:
+        return pickle.load(f)
+
+
+#(abstracts, is_neuro) = transform(sys.argv[1])
+#dump_data("../abstracts_dump", abstracts)
+#dump_data("../is_neuro_dump", is_neuro)
+
+#abstracts = load_data("../abstracts_dump")
+#is_neuro = load_data("../is_neuro_dump")
+
+#model = build_model()
+#dump_data("../model_dump", model)
+
+model = load_data("../model_dump")
+
