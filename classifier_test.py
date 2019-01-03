@@ -6,6 +6,8 @@ from keras.layers import Dense, Dropout, Activation
 from keras.layers import Embedding, Input
 from keras.layers import Conv1D, GlobalMaxPooling1D
 
+import keras_metrics
+
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 from sklearn.feature_extraction.text import CountVectorizer
 
@@ -15,14 +17,14 @@ import re
 import pickle
 from tqdm import tqdm
 
-""" config = tf.ConfigProto()
-config.gpu_options.per_process_gpu_memory_fraction = 0.3
-set_session(tf.Session(config=config)) """
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+set_session(tf.Session(config=config))
 
 # set parameters:
-max_features = 50000
-maxlen = 50000
-batch_size = 32
+max_features = 5000
+maxlen = 5000
+batch_size = 128
 embedding_dims = 300
 filters = 250
 kernel_size = 3
@@ -58,6 +60,7 @@ def transform(input_file):
     vectorizer = CountVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
     print("abstract shape:", abstracts.shape)
+    print("abstracts[0]:", abstracts[0])
 
     label_encoder = LabelEncoder()
     is_neuro = label_encoder.fit_transform(is_neuro)
@@ -67,16 +70,13 @@ def transform(input_file):
 
     one_hot_encoder = OneHotEncoder(sparse=False)
     is_neuro = one_hot_encoder.fit_transform(is_neuro.reshape(-1,1))
+    print("is_neuro 1hot shape", is_neuro.shape)
     print("is_neuro 1hot", is_neuro)
 
     return (abstracts, is_neuro)
 
 
 def build_model():
-    print(abstracts.shape)
-    print(abstracts[0])
-    print(is_neuro.shape)
-    print(is_neuro)
 
     #abstracts = sequence.pad_sequences(abstracts.toarray(), maxlen=abstracts.shape[0])
 
@@ -101,16 +101,28 @@ def build_model():
 
     model = Model(x, out)
 
+    #sample_weights = tf.multiply(is_neuro, tf.constant([0.02, 1.0], dtype='float64'))
+    #weights = tf.gather(tf.constant([0.02, 1.0], dtype='float64'), tf.constant(is_neuro, dtype='int32'))
+
+
+    #loss=tf.nn.weighted_cross_entropy_with_logits(is_neuro, out, weights)
     model.compile(loss='categorical_crossentropy',
                 optimizer='adam',
-                metrics=['accuracy'])
+                metrics=[keras_metrics.precision(), keras_metrics.recall()])
 
     print(model.summary())
 
-    model.fit(abstracts, is_neuro,
-            batch_size=batch_size,
-            epochs=epochs,
-            validation_split=0.2)
+    for epoch in range(epochs):
+
+        model_hist = model.fit(abstracts, is_neuro,
+                batch_size=batch_size,
+                epochs=1,
+                validation_split=0.2,
+                class_weight={0: 0.02, 1:1.0})
+        precision = model_hist.history['val_precision'][0]
+        recall = model_hist.history['val_recall'][0]
+        f_score = (2.0 * precision * recall) / (precision + recall)
+        print(f_score)
 
     return model
 
@@ -118,7 +130,7 @@ def build_model():
 def dump_data(file_name, dump_data):
 
     with open(file_name, "wb") as f:
-            pickle.dump(dump_data, f)
+        pickle.dump(dump_data, f)
 
 
 def load_data(file_name):
@@ -127,14 +139,14 @@ def load_data(file_name):
         return pickle.load(f)
 
 
-#(abstracts, is_neuro) = transform(sys.argv[1])
+(abstracts, is_neuro) = transform(sys.argv[1])
 #dump_data("../abstracts_dump", abstracts)
 #dump_data("../is_neuro_dump", is_neuro)
 
 #abstracts = load_data("../abstracts_dump")
 #is_neuro = load_data("../is_neuro_dump")
 
-#model = build_model()
+model = build_model()
 #dump_data("../model_dump", model)
 
 model = load_data("../model_dump")
