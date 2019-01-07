@@ -1,20 +1,13 @@
+import json, pickle, re, sys
+import keras_metrics
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
+from keras.layers import (Activation, Conv1D, Dense, Dropout, Embedding,
+                          GlobalMaxPooling1D, Input)
+from keras.models import Model, Sequential
 from keras.preprocessing import sequence
-from keras.models import Sequential, Model
-from keras.layers import Dense, Dropout, Activation
-from keras.layers import Embedding, Input
-from keras.layers import Conv1D, GlobalMaxPooling1D
-
-import keras_metrics
-
-from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 from sklearn.feature_extraction.text import CountVectorizer
-
-import sys
-import json
-import re
-import pickle
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from tqdm import tqdm
 
 config = tf.ConfigProto()
@@ -22,13 +15,13 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-max_features = 5000
-maxlen = 5000
-batch_size = 128
+max_features = 500
+maxlen = 500
+batch_size = 32
 embedding_dims = 300
 filters = 250
 kernel_size = 3
-epochs = 2
+epochs = 10
 
 def transform(input_file):
     print("Reading input file..")
@@ -43,24 +36,23 @@ def transform(input_file):
     reg = re.compile(r"(D009420|D009457|D009474|D009422|D001520|D011579|D001523|D004191)")
 
     for article in tqdm(data, desc="Grabbing abstracts and mesh terms"):
-        abstract_parts = []
         abstracts.append("\n".join([x["text"] for x in article["abstract"]]))
-        is_neuro.append("no")
+        is_neuro.append(0)
         for mesh_term in article["mesh_list"]:
             if reg.match(mesh_term["mesh_id"]):
-                is_neuro[-1] = "yes"
+                is_neuro[-1] = 1
                 break
 
     del data # Release the huge chunk of memory, ugly. TODO: structure code properly.
 
-    print("\n",abstracts[0])
-    print(is_neuro[0])
+    #print("\n",abstracts[0])
+    #print(is_neuro[0])
 
     print("Running vectorizer.")
-    vectorizer = CountVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
+    vectorizer = CountVectorizer(max_features=max_features, ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
     print("abstract shape:", abstracts.shape)
-    print("abstracts[0]:", abstracts[0])
+    print("abstracts[0]:", abstracts.shape[0])
 
     label_encoder = LabelEncoder()
     is_neuro = label_encoder.fit_transform(is_neuro)
@@ -78,7 +70,7 @@ def transform(input_file):
 
 def build_model():
 
-    #abstracts = sequence.pad_sequences(abstracts.toarray(), maxlen=abstracts.shape[0])
+    #abstracts = sequence.pad_sequences(abstracts, padding='post')
 
     # Let's define the inputs
     x = Input(shape=(maxlen,))
@@ -118,11 +110,11 @@ def build_model():
                 batch_size=batch_size,
                 epochs=1,
                 validation_split=0.2,
-                class_weight={0: 0.02, 1:1.0})
+                class_weight={0: 1.0, 1: 50})
         precision = model_hist.history['val_precision'][0]
         recall = model_hist.history['val_recall'][0]
         f_score = (2.0 * precision * recall) / (precision + recall)
-        print(f_score)
+        print("epoch", epoch, "F-score:", f_score)
 
     return model
 
@@ -150,4 +142,3 @@ model = build_model()
 #dump_data("../model_dump", model)
 
 model = load_data("../model_dump")
-
