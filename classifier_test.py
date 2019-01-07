@@ -1,11 +1,11 @@
 import json, pickle, re, sys
 import keras_metrics
 import tensorflow as tf
+import numpy as np
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import (Activation, Conv1D, Dense, Dropout, Embedding,
+from keras.layers import (Conv1D, Dense, Dropout, Embedding,
                           GlobalMaxPooling1D, Input)
-from keras.models import Model, Sequential
-from keras.preprocessing import sequence
+from keras.models import Model
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from tqdm import tqdm
@@ -49,10 +49,10 @@ def transform(input_file):
     #print(is_neuro[0])
 
     print("Running vectorizer.")
-    vectorizer = CountVectorizer(max_features=max_features, ngram_range=(1,1))
+    vectorizer = CountVectorizer(ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
     print("abstract shape:", abstracts.shape)
-    print("abstracts[0]:", abstracts.shape[0])
+    print("abstracts[0]:", abstracts[0][0])
 
     label_encoder = LabelEncoder()
     is_neuro = label_encoder.fit_transform(is_neuro)
@@ -61,16 +61,20 @@ def transform(input_file):
     print("is_neuro class labels", label_encoder.classes_)
 
     one_hot_encoder = OneHotEncoder(sparse=False)
-    is_neuro = one_hot_encoder.fit_transform(is_neuro.reshape(-1,1))
+    is_neuro = one_hot_encoder.fit_transform(is_neuro.reshape(1,-1))
     print("is_neuro 1hot shape", is_neuro.shape)
     print("is_neuro 1hot", is_neuro)
+
+    padding = tf.constant([[0,0],[0,maxlen]])
+    abstracts = tf.pad(np.asarray(abstracts), padding)
+    abstracts = tf.slice(abstracts, [0,0], [-1, maxlen])
+
+    #abstracts = sequence.pad_sequences(abstracts, padding='post')
 
     return (abstracts, is_neuro)
 
 
 def build_model():
-
-    #abstracts = sequence.pad_sequences(abstracts, padding='post')
 
     # Let's define the inputs
     x = Input(shape=(maxlen,))

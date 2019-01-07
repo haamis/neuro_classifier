@@ -45,10 +45,9 @@ x, y = rus.fit_resample(x,y)
 
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
 
-svc = LinearSVC(max_iter=1500)
-#print(svc.get_params().keys())
+svc = LinearSVC(max_iter=3000)
 
-classifier = GridSearchCV(svc, {'C': [1, 10, 100, 1000, 10000, 100000, 1000000],},
+classifier = GridSearchCV(svc, {'C': [1, 10, 100, 1000, 10000],},
                             scoring=make_scorer(f1_score), n_jobs=20)
 
 classifier.fit(x_train, y_train)
