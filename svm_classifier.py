@@ -6,7 +6,6 @@ from sklearn.metrics import f1_score, precision_score, recall_score, make_scorer
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 
 from tqdm import tqdm
-from numpy import arange
 from imblearn.under_sampling import RandomUnderSampler
 
 def preprocess_data(input_file):
@@ -46,7 +45,7 @@ x, y = rus.fit_resample(x,y)
 
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
 
-svc = LinearSVC()
+svc = LinearSVC(max_iter=1500)
 #print(svc.get_params().keys())
 
 classifier = GridSearchCV(svc, {'C': [1, 10, 100, 1000, 10000, 100000, 1000000],},
