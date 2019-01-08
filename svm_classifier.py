@@ -12,6 +12,7 @@ def load_data(file_name):
     with open(file_name, "rb") as f:
         return pickle.load(f)
 
+print("Reading input files..")
 x = load_data("./" + sys.argv[1])
 y = load_data("./" + sys.argv[2])
 
@@ -23,17 +24,19 @@ print("Running tfidf..")
 tfidf_transformer = TfidfTransformer()
 x = tfidf_transformer.fit_transform(x)
 
-print("Undersampling..")
-rus = RandomUnderSampler(random_state=0)
-x, y = rus.fit_resample(x,y)
-
 print("Splitting..")
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
 
-svc = LinearSVC(max_iter=20000)
+# print("Undersampling..")
+# rus = RandomUnderSampler(random_state=0)
+# x_train, y_train = rus.fit_resample(x_train,y_train)
 
-classifier = GridSearchCV(svc, {'C': [1, 10, 100, 1000, 10000]}, cv=5,
-                            scoring=make_scorer(f1_score), n_jobs=20)
+print("Running..")
+
+svc = LinearSVC(max_iter=20000, class_weight='balanced')
+
+classifier = GridSearchCV(svc, {'C': [1, 10, 100]}, cv=5,
+                            scoring='f1_macro', n_jobs=20)
 
 classifier.fit(x_train, y_train)
 
