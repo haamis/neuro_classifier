@@ -1,4 +1,4 @@
-import json, pickle, re, sys
+import pickle, sys
 import keras_metrics
 import tensorflow as tf
 import numpy as np
@@ -6,9 +6,9 @@ from keras.backend.tensorflow_backend import set_session
 from keras.layers import (Conv1D, Dense, Dropout, Embedding,
                           GlobalMaxPooling1D, Input)
 from keras.models import Model
+from keras.preprocessing import sequence
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
-from tqdm import tqdm
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -23,27 +23,11 @@ filters = 250
 kernel_size = 3
 epochs = 10
 
-def transform(input_file):
+def transform(abstracts_file, is_neuro_file):
     print("Reading input file..")
 
-    with open("./" + input_file) as f:
-        data = json.load(f)
-
-    abstracts = []
-    is_neuro = []
-
-    # Neuroscience MeSH-terms.
-    reg = re.compile(r"(D009420|D009457|D009474|D009422|D001520|D011579|D001523|D004191)")
-
-    for article in tqdm(data, desc="Grabbing abstracts and mesh terms"):
-        abstracts.append("\n".join([x["text"] for x in article["abstract"]]))
-        is_neuro.append(0)
-        for mesh_term in article["mesh_list"]:
-            if reg.match(mesh_term["mesh_id"]):
-                is_neuro[-1] = 1
-                break
-
-    del data # Release the huge chunk of memory, ugly. TODO: structure code properly.
+    abstracts = load_data("./" + abstracts_file)
+    is_neuro = load_data("./" + is_neuro_file)
 
     #print("\n",abstracts[0])
     #print(is_neuro[0])
@@ -65,11 +49,16 @@ def transform(input_file):
     print("is_neuro 1hot shape", is_neuro.shape)
     print("is_neuro 1hot", is_neuro)
 
-    padding = tf.constant([[0,0],[0,maxlen]])
-    abstracts = tf.pad(np.asarray(abstracts), padding)
-    abstracts = tf.slice(abstracts, [0,0], [-1, maxlen])
+    """ coo = abstracts.tocoo()
+    indices = np.mat([coo.row, coo.col]).transpose()
+    abstracts = tf.SparseTensorValue(indices, coo.data, coo.shape)
 
-    #abstracts = sequence.pad_sequences(abstracts, padding='post')
+    padding = tf.constant([[0,0],[0,maxlen]])
+    abstracts = tf.pad(abstracts.todense(), padding)
+    abstracts = tf.slice(abstracts, [0,0], [-1, maxlen])
+    """
+
+    abstracts = sequence.pad_sequences(abstracts.todense(abstracts), padding='post')
 
     return (abstracts, is_neuro)
 
@@ -135,9 +124,7 @@ def load_data(file_name):
         return pickle.load(f)
 
 
-(abstracts, is_neuro) = transform(sys.argv[1])
-#dump_data("../abstracts_dump", abstracts)
-#dump_data("../is_neuro_dump", is_neuro)
+(abstracts, is_neuro) = transform(*sys.argv[1:])
 
 #abstracts = load_data("../abstracts_dump")
 #is_neuro = load_data("../is_neuro_dump")
