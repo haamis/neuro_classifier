@@ -31,10 +31,9 @@ print("Running..")
 
 # Still gives ConvergenceWarnings with complete_output.
 #svc = LinearSVC(max_iter=100000)#, class_weight='balanced')
-svc = LinearSVC(kernel='linear', max_iter=100000)
+svc = LinearSVC(max_iter=10000)
 
-# TODO: Try with lower C too. Maybe as low as 0.00001? [0.00001, 1, 10, 100, 1000, 10000]
-classifier = GridSearchCV(svc, {'C': [10^x for x in range(-5,5)]}, cv=5,
+classifier = GridSearchCV(svc, {'C': [2**x for x in range(-15,15)]}, cv=5,
                             scoring='f1', n_jobs=20)
 
 classifier.fit(x_train, y_train)
