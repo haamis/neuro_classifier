@@ -23,7 +23,7 @@ batch_size = 256
 embedding_dims = 300
 filters = 250
 kernel_size = 3
-epochs = 50
+epochs = 10
 
 def transform(abstracts_file, is_neuro_file):
     print("Reading input files..")
@@ -84,7 +84,7 @@ def build_model():
         print("epoch", epoch + 1, "F-score:", f_score, "\n")
 
     return model
-
+    
 
 def dump_data(file_name, data):
 

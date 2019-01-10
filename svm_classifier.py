@@ -17,24 +17,24 @@ x = load_data("./" + sys.argv[1])
 y = load_data("./" + sys.argv[2])
 
 print("Running vectorizer..")
-vectorizer = TfidfVectorizer()
+vectorizer = TfidfVectorizer(min_df=3)
 x = vectorizer.fit_transform(x)
 
 print("Splitting..")
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+del x,y # Free up ~3 gigabytes (with full dataset).
 
-print("Undersampling..")
-rus = RandomUnderSampler(random_state=0)
-x_train, y_train = rus.fit_resample(x_train,y_train)
+# print("Undersampling..")
+# rus = RandomUnderSampler(random_state=0)
+# x_train, y_train = rus.fit_resample(x_train,y_train)
 
 print("Running..")
 
 # Still gives ConvergenceWarnings with complete_output.
-#svc = LinearSVC(max_iter=100000)#, class_weight='balanced')
-svc = LinearSVC(max_iter=10000)
+svc = LinearSVC(max_iter=1000000, class_weight='balanced')
 
-classifier = GridSearchCV(svc, {'C': [2**x for x in range(-15,15)]}, cv=5,
-                            scoring='f1', n_jobs=20)
+classifier = GridSearchCV(svc, {'C': [2**x for x in range(-15,17)]}, cv=5,
+                            scoring='f1', n_jobs=20, pre_dispatch=20)
 
 classifier.fit(x_train, y_train)
 
