@@ -1,7 +1,7 @@
 import sys, pickle
 
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.svm import LinearSVC, SVC
+from sklearn.svm import LinearSVC
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -31,10 +31,10 @@ print("Running..")
 
 # Still gives ConvergenceWarnings with complete_output.
 #svc = LinearSVC(max_iter=100000)#, class_weight='balanced')
-svc = SVC(kernel='linear', max_iter=100000)
+svc = LinearSVC(kernel='linear', max_iter=100000)
 
-# TODO: Try with lower C too.
-classifier = GridSearchCV(svc, {'C': [1, 10, 100, 1000, 10000]}, cv=5,
+# TODO: Try with lower C too. Maybe as low as 0.00001? [0.00001, 1, 10, 100, 1000, 10000]
+classifier = GridSearchCV(svc, {'C': [10^x for x in range(-5,5)]}, cv=5,
                             scoring='f1', n_jobs=20)
 
 classifier.fit(x_train, y_train)
