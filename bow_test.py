@@ -8,7 +8,7 @@ from keras.layers import (Dense, Input)
 from keras.models import Model
 
 from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import OneHotEncoder
 from imblearn.under_sampling import RandomUnderSampler
 
@@ -18,9 +18,7 @@ set_session(tf.Session(config=config))
 
 # set parameters:
 max_features = 10000
-maxlen = 1000
-batch_size = 256
-embedding_dims = 300
+batch_size = 1024
 filters = 250
 kernel_size = 3
 epochs = 10
@@ -32,7 +30,7 @@ def transform(abstracts_file, is_neuro_file):
     is_neuro = load_data("./" + is_neuro_file)
 
     print("Running vectorizer..")
-    vectorizer = CountVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
+    vectorizer = TfidfVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
     print("abstract shape:", abstracts.shape)
     print("abstracts[0]:", abstracts[0][0])
