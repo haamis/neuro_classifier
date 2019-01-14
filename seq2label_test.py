@@ -5,9 +5,9 @@ import numpy
 
 from keras.backend.tensorflow_backend import set_session
 from keras.layers import (Conv1D, Dense, Embedding,
-                          GlobalMaxPooling1D, Input)
+                          GlobalMaxPooling1D, Input, Concatenate)
 from keras.models import Model
-from keras.preprocessing import sequence
+from keras.preprocessing import sequence, text
 import keras.utils
 
 from sklearn.model_selection import train_test_split
@@ -21,7 +21,7 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 192
+batch_size = 320
 filters = 250
 kernel_size = 3
 epochs = 10
@@ -38,20 +38,20 @@ def load_data(file_name):
         return pickle.load(f)
 
 
-def vectorize(texts, word_vocab):
+def vectorize(texts, word_vocab, max_len=None):
 
-    vectorized_texts = [] # List of sentences, each sentence is a list of words, and each word is a list of features
+    vectorized_texts = []
     for one_text in texts:
-        vectorized_text = [] # One sentence, ie list of words, each being a list of features
-        for one_word in one_text:
+        vectorized_text = []
+        for one_word in text.text_to_word_sequence(one_text):
             if one_word in word_vocab:
                 vectorized_text.append(word_vocab[one_word].index) # the .index comes from gensim's vocab
             else:
                 vectorized_text.append(1) # OOV
-        vectorized_texts.append(vectorized_text)
-
+        vectorized_texts.append(numpy.array(vectorized_text))
+    print(len(vectorized_texts), len(vectorized_texts[0]))
+    vectorized_texts = sequence.pad_sequences(vectorized_texts, padding='post', maxlen=max_len)
     return numpy.array(vectorized_texts)
-
 
 print("Processing word embeddings..")
 vector_model = KeyedVectors.load_word2vec_format("../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
@@ -65,7 +65,6 @@ two_random_rows = numpy.random.uniform(low=-0.01, high=0.01, size=(2, word_embed
 word_embeddings = numpy.vstack([two_random_rows, word_embeddings])
 
 word_embeddings = keras.utils.normalize(word_embeddings)
-print("word_embeddings size:", sys.getsizeof(word_embeddings))
 
 _, embedding_dims = word_embeddings.shape
 
@@ -75,16 +74,16 @@ is_neuro = load_data("./" + sys.argv[2])
 
 print("Splitting..")
 abstracts_train, abstracts_test, is_neuro_train, is_neuro_test = train_test_split(abstracts, is_neuro, test_size=0.2)
-print("abstracts size:", sys.getsizeof(abstracts))
-print("is_neuro size:", sys.getsizeof(is_neuro))
 del abstracts, is_neuro # Memory management :p
 
 print("Vectorizing train set..")
 abstracts_train = vectorize(abstracts_train, vector_model.vocab)
+print("Train set shape:", abstracts_train.shape)
+_, longest_train_sent = abstracts_train.shape
 print("Vectorizing test set..")
-abstracts_test = vectorize(abstracts_test, vector_model.vocab)
+abstracts_test = vectorize(abstracts_test, vector_model.vocab, longest_train_sent)
+print("Test set shape:", abstracts_test.shape)
 vector_model_length = len(vector_model.vocab)
-print("vector_model size:", sys.getsizeof(vector_model))
 del vector_model # Memory management :p
 
 #     print("Undersampling..")
@@ -95,15 +94,6 @@ del vector_model # Memory management :p
 one_hot_encoder = OneHotEncoder(sparse=False, categories='auto')
 is_neuro_train = one_hot_encoder.fit_transform(numpy.asarray(is_neuro_train).reshape(-1,1))
 is_neuro_test = one_hot_encoder.fit_transform(numpy.asarray(is_neuro_test).reshape(-1,1))
-
-print("Padding..")
-abstracts_train = sequence.pad_sequences(abstracts_train, padding='post')
-_, longest_train_sent = abstracts_train.shape
-abstracts_test = sequence.pad_sequences(abstracts_test, padding='post', maxlen=longest_train_sent)
-
-print("Creating masks..")
-sentence_mask_train = numpy.where((abstracts_train > 0,1))
-sentence_mask_test = numpy.where((abstracts_test > 0,1))
 
 example_count, sequence_len = abstracts_train.shape
 
@@ -117,17 +107,22 @@ embedding_layer = Embedding(vector_model_length+2,
 
 embeddings = embedding_layer(input_layer)
 
-conv_layer = Conv1D(filters, kernel_size, padding='valid', activation='relu', strides=1)
-conv_result = conv_layer(embeddings)
-pooled = (GlobalMaxPooling1D())(conv_result) 
+conv_res = []
+for width in range(2,5):
+
+    conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(embeddings)
+    pooled = (GlobalMaxPooling1D())(conv_result) 
+    conv_res.append(pooled)
+
+concatenated = (Concatenate())(conv_res)
 
 # We add a vanilla hidden layer:
-output_layer = Dense(2, activation='softmax')(pooled)
+output_layer = Dense(2, activation='softmax')(concatenated)
 
 model = Model(input_layer, output_layer)
 
 model.compile(loss='categorical_crossentropy',
-            optimizer='sgd',
+            optimizer='adam',
             metrics=[keras_metrics.precision(), keras_metrics.recall()])
 
 print(model.summary())
