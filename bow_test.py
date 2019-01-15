@@ -10,7 +10,8 @@ from keras.models import Model
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import OneHotEncoder
-from imblearn.under_sampling import RandomUnderSampler
+
+from nltk.corpus import stopwords
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -21,7 +22,7 @@ max_features = 10000
 batch_size = 1024
 filters = 250
 kernel_size = 3
-epochs = 10
+epochs = 25
 
 def transform(abstracts_file, is_neuro_file):
     print("Reading input files..")
@@ -30,7 +31,7 @@ def transform(abstracts_file, is_neuro_file):
     is_neuro = load_data("./" + is_neuro_file)
 
     print("Running vectorizer..")
-    vectorizer = TfidfVectorizer(max_features=max_features, binary=True, ngram_range=(1,1))
+    vectorizer = TfidfVectorizer(max_features=max_features, binary=True, ngram_range=(1,1), stop_words=stopwords.words("english"))
     abstracts = vectorizer.fit_transform(abstracts)
     print("abstract shape:", abstracts.shape)
     print("abstracts[0]:", abstracts[0][0])
@@ -38,11 +39,6 @@ def transform(abstracts_file, is_neuro_file):
     print("Splitting..")
     abstracts_train, abstracts_test, is_neuro_train, is_neuro_test = train_test_split(abstracts, is_neuro, test_size=0.2)
 
-#     print("Undersampling..")
-#     rus = RandomUnderSampler(random_state=0, sampling_strategy='auto')
-#     abstracts_train, is_neuro_train = rus.fit_resample(abstracts_train, is_neuro_train)
-#     abstracts_test, is_neuro_test = rus.fit_resample(abstracts_test, is_neuro_test)
-    
     one_hot_encoder = OneHotEncoder(sparse=False, categories='auto')
     is_neuro_train = one_hot_encoder.fit_transform(np.asarray(is_neuro_train).reshape(-1,1))
     is_neuro_test = one_hot_encoder.fit_transform(np.asarray(is_neuro_test).reshape(-1,1))

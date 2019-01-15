@@ -7,6 +7,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 from imblearn.under_sampling import RandomUnderSampler
 
+from nltk.corpus import stopwords
+
 def load_data(file_name):
     
     with open(file_name, "rb") as f:
@@ -17,7 +19,7 @@ x = load_data("./" + sys.argv[1])
 y = load_data("./" + sys.argv[2])
 
 print("Running vectorizer..")
-vectorizer = TfidfVectorizer(min_df=3)
+vectorizer = TfidfVectorizer(min_df=3, stop_words=stopwords.words("english"))
 x = vectorizer.fit_transform(x)
 
 print("Splitting..")

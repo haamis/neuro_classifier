@@ -4,8 +4,8 @@ import tensorflow as tf
 import numpy
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import (Conv1D, Dense, Embedding,
-                          GlobalMaxPooling1D, Input, Concatenate)
+from keras.layers import Conv1D, Dense, Embedding, Bidirectional, GlobalMaxPooling1D, Input, Concatenate
+from keras.layers import CuDNNLSTM as LSTM
 from keras.models import Model
 from keras.preprocessing import sequence, text
 import keras.utils
@@ -109,16 +109,12 @@ embedding_layer = Embedding(vector_model_length+2,
 
 embeddings = embedding_layer(input_layer)
 
-conv_res = []
-for width in range(2,5):
+lstm_layer = Bidirectional(LSTM(100, return_sequences=True))(embeddings)
 
-    conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(embeddings)
-    pooled = (GlobalMaxPooling1D())(conv_result) 
-    conv_res.append(pooled)
+#conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(lstm_layer)
+#pooled = (GlobalMaxPooling1D())(conv_result) 
 
-concatenated = (Concatenate())(conv_res)
-
-output_layer = Dense(2, activation='softmax')(concatenated)
+output_layer = Dense(2, activation='softmax')(lstm_layer)
 
 model = Model(input_layer, output_layer)
 
