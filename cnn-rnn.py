@@ -6,9 +6,11 @@ import numpy
 from keras.backend.tensorflow_backend import set_session
 from keras.layers import Conv1D, Dense, Embedding, Bidirectional, GlobalMaxPooling1D, Input, Concatenate
 from keras.layers import CuDNNLSTM as LSTM
+from keras.layers import CuDNNGRU as GRU
 from keras.models import Model
 from keras.preprocessing import sequence, text
 import keras.utils
+from keras.callbacks import EarlyStopping
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
@@ -22,7 +24,7 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 320
+batch_size = 512
 filters = 250
 kernel_size = 3
 epochs = 10
@@ -53,83 +55,91 @@ def vectorize(texts, word_vocab, max_len=None):
     vectorized_texts = sequence.pad_sequences(vectorized_texts, padding='post', maxlen=max_len)
     return numpy.array(vectorized_texts)
 
-print("Processing word embeddings..")
-vector_model = KeyedVectors.load_word2vec_format("../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
+def transform(abstracts_file, is_neuro_file):
 
-for word_record in vector_model.vocab.values():
-    word_record.index += 2
-    
-word_embeddings = vector_model.vectors 
+    print("Processing word embeddings..")
+    vector_model = KeyedVectors.load_word2vec_format("../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
 
-two_random_rows = numpy.random.uniform(low=-0.01, high=0.01, size=(2, word_embeddings.shape[1]))
-word_embeddings = numpy.vstack([two_random_rows, word_embeddings])
+    for word_record in vector_model.vocab.values():
+        word_record.index += 2
+        
+    word_embeddings = vector_model.vectors 
 
-word_embeddings = keras.utils.normalize(word_embeddings)
+    two_random_rows = numpy.random.uniform(low=-0.01, high=0.01, size=(2, word_embeddings.shape[1]))
+    word_embeddings = numpy.vstack([two_random_rows, word_embeddings])
 
-_, embedding_dims = word_embeddings.shape
+    word_embeddings = keras.utils.normalize(word_embeddings)
 
-print("Reading input files..")
-abstracts = load_data("./" + sys.argv[1])
-is_neuro = load_data("./" + sys.argv[2])
+    _, embedding_dims = word_embeddings.shape
 
-print("Tokenizing..")
-abstracts = [text.text_to_word_sequence(a) for a in abstracts]
-#stop_words = stopwords.words("english")
-#abstracts = [[word for word in abstract if not word in stop_words] for abstract in abstracts]
+    print("Reading input files..")
+    abstracts = load_data("./" + abstracts_file)
+    is_neuro = load_data("./" + is_neuro_file)
 
-print("Splitting..")
-abstracts_train, abstracts_test, is_neuro_train, is_neuro_test = train_test_split(abstracts, is_neuro, test_size=0.2)
-del abstracts, is_neuro # Memory management :p
+    print("Tokenizing..")
+    abstracts = [text.text_to_word_sequence(a) for a in abstracts]
+    #stop_words = stopwords.words("english")
+    #abstracts = [[word for word in abstract if not word in stop_words] for abstract in abstracts]
 
-print(abstracts_train[0])
+    print("Splitting..")
+    abstracts_train, abstracts_test, is_neuro_train, is_neuro_test = train_test_split(abstracts, is_neuro, test_size=0.2)
+    #del abstracts, is_neuro # Memory management :p
 
-print("Vectorizing train set..")
-abstracts_train = vectorize(abstracts_train, vector_model.vocab)
-print("Train set shape:", abstracts_train.shape)
-_, longest_train_sent = abstracts_train.shape
-print("Vectorizing test set..")
-abstracts_test = vectorize(abstracts_test, vector_model.vocab, max_len=longest_train_sent)
-print("Test set shape:", abstracts_test.shape)
-vector_model_length = len(vector_model.vocab)
-del vector_model # Memory management :p
+    print(abstracts_train[0])
 
-one_hot_encoder = OneHotEncoder(sparse=False, categories='auto')
-is_neuro_train = one_hot_encoder.fit_transform(numpy.asarray(is_neuro_train).reshape(-1,1))
-is_neuro_test = one_hot_encoder.fit_transform(numpy.asarray(is_neuro_test).reshape(-1,1))
+    print("Vectorizing train set..")
+    abstracts_train = vectorize(abstracts_train, vector_model.vocab)
+    print("Train set shape:", abstracts_train.shape)
+    _, longest_train_sent = abstracts_train.shape
+    print("Vectorizing test set..")
+    abstracts_test = vectorize(abstracts_test, vector_model.vocab, max_len=longest_train_sent)
+    print("Test set shape:", abstracts_test.shape)
+    vector_model_length = len(vector_model.vocab)
+    #del vector_model # Memory management :p
 
-example_count, sequence_len = abstracts_train.shape
+    one_hot_encoder = OneHotEncoder(sparse=False, categories='auto')
+    is_neuro_train = one_hot_encoder.fit_transform(numpy.asarray(is_neuro_train).reshape(-1,1))
+    is_neuro_test = one_hot_encoder.fit_transform(numpy.asarray(is_neuro_test).reshape(-1,1))
 
+    _, sequence_len = abstracts_train.shape
 
-print("Building model..")
-input_layer = Input(shape=(sequence_len,))
+    return abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, sequence_len, vector_model_length, embedding_dims
 
-embedding_layer = Embedding(vector_model_length+2,
-                    embedding_dims,
-                    mask_zero=False)
+def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, sequence_len, vector_model_length, embedding_dims):
 
-embeddings = embedding_layer(input_layer)
+    print("Building model..")
+    input_layer = Input(shape=(sequence_len,))
 
-lstm_layer = Bidirectional(LSTM(100, return_sequences=True))(embeddings)
+    embedding_layer = Embedding(vector_model_length+2,
+                        embedding_dims,
+                        mask_zero=False)
 
-#conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(lstm_layer)
-#pooled = (GlobalMaxPooling1D())(conv_result) 
+    embeddings = embedding_layer(input_layer)
 
-output_layer = Dense(2, activation='softmax')(lstm_layer)
+    #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embeddings)
 
-model = Model(input_layer, output_layer)
+    rnn_layer1 = Bidirectional(GRU(10, return_sequences=True))(embeddings)
 
-model.compile(loss='categorical_crossentropy',
-            optimizer='adam',
-            metrics=[keras_metrics.precision(), keras_metrics.recall(), 'accuracy'])
+    rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
 
-print(model.summary())
+    pooled = (GlobalMaxPooling1D())(rnn_layer2) 
 
-for epoch in range(epochs):
+    output_layer = Dense(2, activation='softmax')(pooled)
+
+    model = Model(input_layer, output_layer)
+
+    model.compile(loss='categorical_crossentropy',
+                optimizer='adam',
+                metrics=[keras_metrics.precision(), keras_metrics.recall(), keras_metrics.f1_score()])
+
+    print(model.summary())
+
+    es_callback=EarlyStopping(monitor='val_f1_score', min_delta=0, patience=2, verbose=1, mode='auto')
+
     model_hist = model.fit(abstracts_train, is_neuro_train,
-            batch_size=batch_size,
-            epochs=1,
-            validation_data=(abstracts_test, is_neuro_test))
-    precision = model_hist.history['val_precision'][0]
-    recall = model_hist.history['val_recall'][0]
-    f_score = (2.0 * precision * recall) / (precision + recall)
-    print("epoch", epoch + 1, "F-score:", f_score, "\n")
+                            batch_size=batch_size,
+                            epochs=epochs,
+                            validation_data=(abstracts_test, is_neuro_test),
+                            callbacks=[es_callback])
+    
+build_model(*transform(sys.argv[1], sys.argv[2]))
