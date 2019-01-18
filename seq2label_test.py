@@ -25,7 +25,7 @@ set_session(tf.Session(config=config))
 batch_size = 320
 filters = 250
 kernel_size = 3
-epochs = 10
+epochs = 25
 
 def dump_data(file_name, data):
 
@@ -104,21 +104,21 @@ print("Building model..")
 input_layer = Input(shape=(sequence_len,))
 
 embedding_layer = Embedding(vector_model_length+2,
-                    embedding_dims,
-                    mask_zero=False)
-
-embeddings = embedding_layer(input_layer)
+                    embedding_dims, trainable=False,
+                    mask_zero=False, weights=[word_embeddings])(input_layer)
 
 conv_res = []
 for width in range(2,5):
 
-    conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(embeddings)
+    conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(embedding_layer)
     pooled = (GlobalMaxPooling1D())(conv_result) 
     conv_res.append(pooled)
 
 concatenated = (Concatenate())(conv_res)
 
-output_layer = Dense(2, activation='softmax')(concatenated)
+hidden_layer = Dense(100, activation='tanh')(concatenated)
+
+output_layer = Dense(2, activation='softmax')(hidden_layer)
 
 model = Model(input_layer, output_layer)
 

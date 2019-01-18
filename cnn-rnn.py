@@ -17,7 +17,7 @@ from sklearn.preprocessing import OneHotEncoder
 
 from gensim.models import KeyedVectors
 
-from nltk.corpus import stopwords
+#from nltk.corpus import stopwords
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -27,7 +27,7 @@ set_session(tf.Session(config=config))
 batch_size = 512
 filters = 250
 kernel_size = 3
-epochs = 10
+epochs = 25
 
 def dump_data(file_name, data):
 
@@ -62,7 +62,7 @@ def transform(abstracts_file, is_neuro_file):
 
     for word_record in vector_model.vocab.values():
         word_record.index += 2
-        
+
     word_embeddings = vector_model.vectors 
 
     two_random_rows = numpy.random.uniform(low=-0.01, high=0.01, size=(2, word_embeddings.shape[1]))
@@ -103,26 +103,28 @@ def transform(abstracts_file, is_neuro_file):
 
     _, sequence_len = abstracts_train.shape
 
-    return abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, sequence_len, vector_model_length, embedding_dims
+    return abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, sequence_len, vector_model_length, embedding_dims, word_embeddings
 
-def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, sequence_len, vector_model_length, embedding_dims):
+def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, sequence_len, vector_model_length, embedding_dims, word_embeddings):
 
     print("Building model..")
     input_layer = Input(shape=(sequence_len,))
 
     embedding_layer = Embedding(vector_model_length+2,
-                        embedding_dims,
-                        mask_zero=False)
+                        embedding_dims, trainable=False,
+                        mask_zero=False, weights=[word_embeddings])(input_layer)
 
-    embeddings = embedding_layer(input_layer)
+    conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embedding_layer)
 
-    #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embeddings)
+    #rnn_layer1 = Bidirectional(GRU(10, return_sequences=True))(conv_result)
 
-    rnn_layer1 = Bidirectional(GRU(10, return_sequences=True))(embeddings)
+    #rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
 
-    rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
+    #rnn_layer3 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer2)
 
-    pooled = (GlobalMaxPooling1D())(rnn_layer2) 
+    #rnn_layer4 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer3)
+
+    pooled = (GlobalMaxPooling1D())(conv_result)
 
     output_layer = Dense(2, activation='softmax')(pooled)
 
@@ -134,12 +136,12 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
 
     print(model.summary())
 
-    es_callback=EarlyStopping(monitor='val_f1_score', min_delta=0, patience=2, verbose=1, mode='auto')
+    #es_callback = EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=1, mode='auto')
 
     model_hist = model.fit(abstracts_train, is_neuro_train,
                             batch_size=batch_size,
                             epochs=epochs,
-                            validation_data=(abstracts_test, is_neuro_test),
-                            callbacks=[es_callback])
+                            validation_data=(abstracts_test, is_neuro_test))
+                            #callbacks=[es_callback])
     
 build_model(*transform(sys.argv[1], sys.argv[2]))
