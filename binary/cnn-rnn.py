@@ -114,17 +114,19 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
                         embedding_dims, trainable=False,
                         mask_zero=False, weights=[word_embeddings])(input_layer)
 
-    conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embedding_layer)
+    #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embedding_layer)
 
-    #rnn_layer1 = Bidirectional(GRU(10, return_sequences=True))(conv_result)
+    rnn_layer1 = Bidirectional(GRU(10, return_sequences=True))(embedding_layer)
 
-    #rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
+    rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
 
-    #rnn_layer3 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer2)
+    rnn_layer3 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer2)
 
     #rnn_layer4 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer3)
 
-    pooled = (GlobalMaxPooling1D())(conv_result)
+    pooled = (GlobalMaxPooling1D())(rnn_layer3)
+
+    #hidden = Dense(200, activation='tanh')(pooled)
 
     output_layer = Dense(2, activation='softmax')(pooled)
 
