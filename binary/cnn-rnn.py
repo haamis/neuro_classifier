@@ -140,7 +140,7 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
 
     #es_callback = EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=1, mode='auto')
 
-    model_hist = model.fit(abstracts_train, is_neuro_train,
+    model.fit(abstracts_train, is_neuro_train,
                             batch_size=batch_size,
                             epochs=epochs,
                             validation_data=(abstracts_test, is_neuro_test))
