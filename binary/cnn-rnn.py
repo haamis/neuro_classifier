@@ -27,7 +27,7 @@ set_session(tf.Session(config=config))
 batch_size = 512
 filters = 250
 kernel_size = 3
-epochs = 25
+epochs = 50
 
 def dump_data(file_name, data):
 
@@ -58,7 +58,7 @@ def vectorize(texts, word_vocab, max_len=None):
 def transform(abstracts_file, is_neuro_file):
 
     print("Processing word embeddings..")
-    vector_model = KeyedVectors.load_word2vec_format("../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
+    vector_model = KeyedVectors.load_word2vec_format("../../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
 
     for word_record in vector_model.vocab.values():
         word_record.index += 2
@@ -120,15 +120,15 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
 
     rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
 
-    rnn_layer3 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer2)
+    rnn_layer3 = Bidirectional(GRU(10, return_sequences=False))(rnn_layer2)
 
     #rnn_layer4 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer3)
 
-    pooled = (GlobalMaxPooling1D())(rnn_layer3)
+    #pooled = (GlobalMaxPooling1D())(rnn_layer3)
 
     #hidden = Dense(200, activation='tanh')(pooled)
 
-    output_layer = Dense(2, activation='softmax')(pooled)
+    output_layer = Dense(2, activation='softmax')(rnn_layer3)
 
     model = Model(input_layer, output_layer)
 

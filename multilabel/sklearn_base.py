@@ -2,10 +2,8 @@ import sys, pickle
 
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import f1_score, precision_score, recall_score
-from sklearn.preprocessing import OrdinalEncoder
-import numpy
-
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 def load_data(file_name):
     
@@ -23,11 +21,15 @@ y = load_data("./" + sys.argv[2])
 print("Running..")
 
 classifier = MLPClassifier()
-ord_enc = OrdinalEncoder()
+mlb = MultiLabelBinarizer()
+vectorizer = TfidfVectorizer(min_df=3)
 
-x = numpy.array(x).reshape(-1, 1)
-#y = numpy.array([y])
-x = ord_enc.fit_transform(x, y)
+print("Running vectorizer..")
+x = vectorizer.fit_transform(x)
+print("Binarizing labels..")
+y = mlb.fit_transform(y)
+
+print("Classifying..")
 
 classifier.fit(x, y)
 
