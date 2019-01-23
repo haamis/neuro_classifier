@@ -9,14 +9,14 @@ from keras.models import Model
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import f1_score
+from sklearn.metrics import accuracy_score, hamming_loss, f1_score
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 1024
+batch_size = 4096
 filters = 250
 epochs = 25
 
@@ -29,13 +29,17 @@ def transform(abstracts_file, mesh_file):
     print("Running vectorizer..")
     vectorizer = TfidfVectorizer(ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
+    #abstracts = abstracts.reshape(-1, -1)
     print("abstract shape:", abstracts.shape)
-    print("abstracts[0]:", abstracts[0][0])
+    #print("abstracts[0][0]:", abstracts[0][0])
 
     print("Binarizing labels..")
-    mlb = MultiLabelBinarizer()
+    mlb = MultiLabelBinarizer(sparse_output=True)
     labels = mlb.fit_transform(labels)
-    
+    #labels = labels.reshape(1, -1)
+    print("labels shape:", labels.shape)
+    print("labels[0][0]:", labels[0][0])
+
     print("Splitting..")
     abstracts_train, abstracts_test, labels_train, labels_test = train_test_split(abstracts, labels, test_size=0.2)
 
@@ -48,7 +52,7 @@ def build_model():
 
     input_layer = Input(shape=(feature_count,))
 
-    hidden = Dense(500, activation="relu")(input_layer)
+    hidden = Dense(10, activation="relu")(input_layer)
 
     out = Dense(labels_train.shape[1], activation='sigmoid')(hidden)
 
@@ -65,6 +69,7 @@ def build_model():
                 batch_size=batch_size,
                 epochs=1)
         pred_labels = model.predict(abstracts_test)
+        print(hamming_loss(labels_test, pred_labels))
         print(f1_score(labels_test, pred_labels, average='micro'))
         #precision = model_hist.history['val_precision'][0]
         #recall = model_hist.history['val_recall'][0]
