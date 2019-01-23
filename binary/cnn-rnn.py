@@ -24,10 +24,10 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 512
+batch_size = 1280
 filters = 250
 kernel_size = 3
-epochs = 50
+epochs = 100
 
 def dump_data(file_name, data):
 
@@ -116,11 +116,11 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
 
     #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embedding_layer)
 
-    rnn_layer1 = Bidirectional(GRU(10, return_sequences=True))(embedding_layer)
+    rnn_layer1 = Bidirectional(GRU(10, return_sequences=False))(embedding_layer)
 
-    rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
+    #rnn_layer2 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer1)
 
-    rnn_layer3 = Bidirectional(GRU(10, return_sequences=False))(rnn_layer2)
+    #rnn_layer3 = Bidirectional(GRU(10, return_sequences=False))(rnn_layer2)
 
     #rnn_layer4 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer3)
 
@@ -128,7 +128,7 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
 
     #hidden = Dense(200, activation='tanh')(pooled)
 
-    output_layer = Dense(2, activation='softmax')(rnn_layer3)
+    output_layer = Dense(2, activation='softmax')(rnn_layer1)
 
     model = Model(input_layer, output_layer)
 
