@@ -11,6 +11,7 @@ from keras.models import Model
 from keras.preprocessing import sequence, text
 import keras.utils
 from keras.callbacks import EarlyStopping
+from keras.optimizers import Adam
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
@@ -27,7 +28,7 @@ set_session(tf.Session(config=config))
 batch_size = 1280
 filters = 250
 kernel_size = 3
-epochs = 100
+epochs = 20
 
 def dump_data(file_name, data):
 
@@ -133,7 +134,7 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
     model = Model(input_layer, output_layer)
 
     model.compile(loss='categorical_crossentropy',
-                optimizer='adam',
+                optimizer=Adam(lr=0.01),
                 metrics=[keras_metrics.precision(), keras_metrics.recall(), keras_metrics.f1_score()])
 
     print(model.summary())

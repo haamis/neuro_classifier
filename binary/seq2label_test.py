@@ -8,6 +8,7 @@ from keras.layers import (Conv1D, Dense, Embedding,
                           GlobalMaxPooling1D, Input, Concatenate)
 from keras.models import Model
 from keras.preprocessing import sequence, text
+from keras.optimizers import Adam
 import keras.utils
 
 from sklearn.model_selection import train_test_split
@@ -54,7 +55,7 @@ def vectorize(texts, word_vocab, max_len=None):
     return numpy.array(vectorized_texts)
 
 print("Processing word embeddings..")
-vector_model = KeyedVectors.load_word2vec_format("../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
+vector_model = KeyedVectors.load_word2vec_format("../../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
 
 for word_record in vector_model.vocab.values():
     word_record.index += 2
@@ -116,14 +117,14 @@ for width in range(2,5):
 
 concatenated = (Concatenate())(conv_res)
 
-hidden_layer = Dense(100, activation='tanh')(concatenated)
+#hidden_layer = Dense(100, activation='tanh')(concatenated)
 
-output_layer = Dense(2, activation='softmax')(hidden_layer)
+output_layer = Dense(2, activation='softmax')(concatenated)
 
 model = Model(input_layer, output_layer)
 
 model.compile(loss='categorical_crossentropy',
-            optimizer='adam',
+            optimizer=Adam(lr=0.0005),
             metrics=[keras_metrics.precision(), keras_metrics.recall(), 'accuracy'])
 
 print(model.summary())
