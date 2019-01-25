@@ -9,7 +9,9 @@ from keras.models import Model
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import accuracy_score, hamming_loss, f1_score
+from sklearn.metrics import precision_score, recall_score, hamming_loss, f1_score
+
+from tqdm import tqdm
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -29,16 +31,12 @@ def transform(abstracts_file, mesh_file):
     print("Running vectorizer..")
     vectorizer = TfidfVectorizer(ngram_range=(1,1))
     abstracts = vectorizer.fit_transform(abstracts)
-    #abstracts = abstracts.reshape(-1, -1)
     print("abstract shape:", abstracts.shape)
-    #print("abstracts[0][0]:", abstracts[0][0])
 
     print("Binarizing labels..")
     mlb = MultiLabelBinarizer(sparse_output=True)
     labels = mlb.fit_transform(labels)
-    #labels = labels.reshape(1, -1)
     print("labels shape:", labels.shape)
-    print("labels[0][0]:", labels[0][0])
 
     print("Splitting..")
     abstracts_train, abstracts_test, labels_train, labels_test = train_test_split(abstracts, labels, test_size=0.2)
@@ -66,15 +64,22 @@ def build_model():
     for epoch in range(epochs):
 
         model.fit(abstracts_train, labels_train,
-                batch_size=batch_size,
-                epochs=1)
-        pred_labels = model.predict(abstracts_test)
-        print(hamming_loss(labels_test, pred_labels))
-        print(f1_score(labels_test, pred_labels, average='micro'))
-        #precision = model_hist.history['val_precision'][0]
-        #recall = model_hist.history['val_recall'][0]
-        #f_score = (2.0 * precision * recall) / (precision + recall)
-        #print("epoch", epoch + 1, "F-score:", f_score, "\n")
+            batch_size=batch_size,
+            epochs=1)
+        prob_labels = model.predict(abstracts_test)
+        label_indices = [np.argpartition(array, -15)[-15:] for array in prob_labels]
+
+        pred_labels = []
+        for i, array in tqdm(enumerate(prob_labels), desc="Evaluating"):
+            temp_array = np.zeros(len(array))
+            for j in label_indices[i]:     
+                temp_array[j] = 1
+            pred_labels.append(temp_array)
+        pred_labels = np.array(pred_labels)
+        print("Epoch", epoch + 1)
+        print("Precision:", precision_score(labels_test, pred_labels, average='micro'))
+        print("Recall:", recall_score(labels_test, pred_labels, average='micro'))
+        print("F1-score:", f1_score(labels_test, pred_labels, average='micro'))
 
     return model
     
@@ -83,7 +88,7 @@ def dump_data(file_name, data):
 
     with open(file_name, "wb") as f:
         pickle.dump(data, f)
-
+ 
 
 def load_data(file_name):
     
