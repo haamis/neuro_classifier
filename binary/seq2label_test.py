@@ -9,14 +9,12 @@ from keras.layers import (Conv1D, Dense, Embedding,
 from keras.models import Model
 from keras.preprocessing import sequence, text
 from keras.optimizers import Adam
-import keras.utils
+from keras.utils import normalize
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 
 from gensim.models import KeyedVectors
-
-from nltk.corpus import stopwords
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -65,7 +63,7 @@ word_embeddings = vector_model.vectors
 two_random_rows = numpy.random.uniform(low=-0.01, high=0.01, size=(2, word_embeddings.shape[1]))
 word_embeddings = numpy.vstack([two_random_rows, word_embeddings])
 
-word_embeddings = keras.utils.normalize(word_embeddings)
+word_embeddings = normalize(word_embeddings)
 
 _, embedding_dims = word_embeddings.shape
 
