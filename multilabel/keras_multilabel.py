@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import Bidirectional, Conv1D, Dense, Input, Embedding, GlobalMaxPooling1D
+from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, Embedding, GlobalMaxPooling1D
 from keras.models import Model
 from keras.preprocessing import sequence, text
 from keras.utils import normalize
@@ -23,7 +23,7 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 1024
+batch_size = 64
 filters = 250
 kernel_size = 3
 epochs = 25
@@ -79,7 +79,7 @@ def transform(abstracts_file, mesh_file):
     abstracts = [text.text_to_word_sequence(a) for a in abstracts]
 
     print("Vectorizing abstracts..")
-    abstracts = vectorize(abstracts, vector_model.vocab)
+    abstracts = vectorize(abstracts, vector_model.vocab, max_len=500)
     print("Abstracts shape:", abstracts.shape)
     vector_model_length = len(vector_model.vocab)
 
@@ -103,20 +103,30 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     embedding_layer = Embedding(vector_model_length+2,
                         embedding_dims, trainable=False,
                         mask_zero=False, weights=[word_embeddings])(input_layer)
-    del word_embeddings
+    #del word_embeddings
 
-    rnn_layer1 = Bidirectional(GRU(10, return_sequences=False))(embedding_layer)
+    dropout_layer = Dropout(0.2)(embedding_layer)
 
-    # conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(embedding_layer)
+    #rnn_layer1 = Bidirectional(GRU(10, return_sequences=False))(dropout_layer)
 
-    # pooled = GlobalMaxPooling1D()(conv_result)
+    #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(dropout_layer)
+    #pooled = GlobalMaxPooling1D()(conv_result)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(rnn_layer1)
+    conv_res = []
+    for width in range(2,5):
+
+        conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(dropout_layer)
+        pooled = (GlobalMaxPooling1D())(conv_result) 
+        conv_res.append(pooled)
+
+    concatenated = (Concatenate())(conv_res)
+    
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(concatenated)
 
     model = Model(input_layer, output_layer)
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=0.0001))
+                optimizer=Adam(lr=0.001))
 
     print(model.summary())
 
@@ -124,21 +134,23 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
         model.fit(abstracts_train, labels_train,
             batch_size=batch_size,
-            epochs=1)
+            epochs=1,
+            validation_data=[abstracts_test, labels_test])
         print("Predicting probabilities..")
         prob_labels = model.predict(abstracts_test)
-        label_indices = [np.argpartition(array, -15)[-15:] for array in prob_labels]
+        # label_indices = [np.argpartition(array, -15)[-15:] for array in prob_labels]
 
-        print("Probs to labels..")
-        pred_labels = []
-        for i, array in tqdm(enumerate(prob_labels), desc="Evaluating"):
-            temp_array = np.zeros(len(array))
-            for j in label_indices[i]:     
-                temp_array[j] = 1
-            pred_labels.append(temp_array)
-        pred_labels = np.array(pred_labels)
-        # pred_labels = np.zeros(prob_labels.shape)
-        # pred_labels[prob_labels>0.5] = 1
+        # pred_labels = []
+        # for i, array in tqdm(enumerate(prob_labels), desc="Probs to labels"):
+        #     temp_array = np.zeros(len(array))
+        #     for j in label_indices[i]:     
+        #         temp_array[j] = 1
+        #     pred_labels.append(temp_array)
+        # pred_labels = np.array(pred_labels)
+        pred_labels = np.zeros(prob_labels.shape)
+        pred_labels[prob_labels>0.5] = 1
+        #import pdb
+        #pdb.set_trace()
         print("Epoch", epoch + 1)
         precision, recall, f1, _ = precision_recall_fscore_support(labels_test, pred_labels, average='micro')
         print("Precision:", precision)

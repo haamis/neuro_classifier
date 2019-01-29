@@ -21,7 +21,7 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 320
+batch_size = 64
 filters = 250
 kernel_size = 3
 epochs = 25
@@ -83,7 +83,7 @@ del abstracts, is_neuro # Memory management :p
 print(abstracts_train[0])
 
 print("Vectorizing train set..")
-abstracts_train = vectorize(abstracts_train, vector_model.vocab)
+abstracts_train = vectorize(abstracts_train, vector_model.vocab, max_len=500)
 print("Train set shape:", abstracts_train.shape)
 _, longest_train_sent = abstracts_train.shape
 print("Vectorizing test set..")
@@ -122,7 +122,7 @@ output_layer = Dense(2, activation='softmax')(concatenated)
 model = Model(input_layer, output_layer)
 
 model.compile(loss='categorical_crossentropy',
-            optimizer=Adam(lr=0.0005),
+            optimizer=Adam(lr=0.001),
             metrics=[keras_metrics.precision(), keras_metrics.recall(), 'accuracy'])
 
 print(model.summary())

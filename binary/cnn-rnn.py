@@ -25,7 +25,7 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 1280
+batch_size = 64
 filters = 250
 kernel_size = 3
 epochs = 20
@@ -89,7 +89,7 @@ def transform(abstracts_file, is_neuro_file):
     print(abstracts_train[0])
 
     print("Vectorizing train set..")
-    abstracts_train = vectorize(abstracts_train, vector_model.vocab)
+    abstracts_train = vectorize(abstracts_train, vector_model.vocab, max_len=500)
     print("Train set shape:", abstracts_train.shape)
     _, longest_train_sent = abstracts_train.shape
     print("Vectorizing test set..")
@@ -115,9 +115,11 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
                         embedding_dims, trainable=False,
                         mask_zero=False, weights=[word_embeddings])(input_layer)
 
-    droupout_layer = Dropout(0.2)(embedding_layer)
+    dropout_layer1 = Dropout(0.2)(embedding_layer)
 
-    conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(droupout_layer)
+    conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(dropout_layer1)
+
+    dropout_layer2 = Dropout(0.2)(conv_result)
 
     #rnn_layer1 = Bidirectional(GRU(10, return_sequences=False))(embedding_layer)
 
@@ -127,7 +129,7 @@ def build_model(abstracts_train, abstracts_test, is_neuro_train, is_neuro_test, 
 
     #rnn_layer4 = Bidirectional(GRU(10, return_sequences=True))(rnn_layer3)
 
-    pooled = (GlobalMaxPooling1D())(conv_result)
+    pooled = (GlobalMaxPooling1D())(dropout_layer2)
 
     #hidden = Dense(200, activation='tanh')(pooled)
 
