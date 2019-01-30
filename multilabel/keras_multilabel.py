@@ -2,6 +2,10 @@ import pickle, sys
 import tensorflow as tf
 import numpy as np
 
+from timeit import default_timer as timer
+
+from scipy.sparse import csr_matrix, lil_matrix
+
 from keras.backend.tensorflow_backend import set_session
 from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, Embedding, GlobalMaxPooling1D
 from keras.models import Model
@@ -26,7 +30,7 @@ set_session(tf.Session(config=config))
 batch_size = 64
 filters = 250
 kernel_size = 3
-epochs = 25
+epochs = 5
 
 def dump_data(file_name, data):
 
@@ -43,20 +47,20 @@ def load_data(file_name):
 def vectorize(texts, word_vocab, max_len=None):
 
     vectorized_texts = []
-    for one_text in texts:
+    for one_text in tqdm(texts, desc="Vectorizing"):
         vectorized_text = []
         for one_word in one_text:
             if one_word in word_vocab:
                 vectorized_text.append(word_vocab[one_word].index) # the .index comes from gensim's vocab
             else:
                 vectorized_text.append(1) # OOV
-        vectorized_texts.append(np.array(vectorized_text))
+        vectorized_texts.append(np.array(vectorized_text, dtype='uint32'))
     vectorized_texts = sequence.pad_sequences(vectorized_texts, padding='post', maxlen=max_len)
     return np.array(vectorized_texts)
 
 def transform(abstracts_file, mesh_file):
     print("Processing word embeddings..")
-    vector_model = KeyedVectors.load_word2vec_format("../../PubMed-and-PMC-w2v.bin", binary=True, limit=100000)
+    vector_model = KeyedVectors.load_word2vec_format("../../PubMed-and-PMC-w2v.bin", binary=True, limit=1000000)
 
     for word_record in vector_model.vocab.values():
         word_record.index += 2
@@ -81,15 +85,18 @@ def transform(abstracts_file, mesh_file):
     print("Vectorizing abstracts..")
     abstracts = vectorize(abstracts, vector_model.vocab, max_len=500)
     print("Abstracts shape:", abstracts.shape)
+    #print(np.dtype(abstracts[0]))
     vector_model_length = len(vector_model.vocab)
 
     print("Binarizing labels..")
     mlb = MultiLabelBinarizer(sparse_output=True)
     labels = mlb.fit_transform(labels)
+    labels = labels.astype('b')
     print("Labels shape:", labels.shape)
+    print(np.dtype(labels))
 
     print("Splitting..")
-    abstracts_train, abstracts_test, labels_train, labels_test = train_test_split(abstracts, labels, test_size=0.2)
+    abstracts_train, abstracts_test, labels_train, labels_test = train_test_split(abstracts, labels, test_size=0.1)
 
     _, sequence_len = abstracts_train.shape
 
@@ -103,7 +110,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     embedding_layer = Embedding(vector_model_length+2,
                         embedding_dims, trainable=False,
                         mask_zero=False, weights=[word_embeddings])(input_layer)
-    #del word_embeddings
+    del word_embeddings
 
     dropout_layer = Dropout(0.2)(embedding_layer)
 
@@ -126,7 +133,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     model = Model(input_layer, output_layer)
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=0.001))
+                optimizer=Adam(lr=0.0009))
 
     print(model.summary())
 
@@ -147,7 +154,8 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         #         temp_array[j] = 1
         #     pred_labels.append(temp_array)
         # pred_labels = np.array(pred_labels)
-        pred_labels = np.zeros(prob_labels.shape)
+        print("Probabilities to labels..")
+        pred_labels = lil_matrix(prob_labels.shape, dtype='b')
         pred_labels[prob_labels>0.5] = 1
         #import pdb
         #pdb.set_trace()
@@ -156,8 +164,6 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
-
-    return model
 
 
 build_model(*transform(sys.argv[1], sys.argv[2]))
