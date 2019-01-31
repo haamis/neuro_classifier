@@ -36,9 +36,6 @@ classifier.fit(x_train, y_train)
 
 y_pred = classifier.predict(x_test)
 
-import pdb
-pdb.set_trace()
-
 print(y_pred[:])
 
 print("Precision:", precision_score(y_test, y_pred, average='micro'))

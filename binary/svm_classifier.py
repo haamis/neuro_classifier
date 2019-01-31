@@ -33,7 +33,7 @@ del x,y # Free up ~3 gigabytes (with full dataset).
 print("Running..")
 
 # Still gives ConvergenceWarnings with complete_output.
-svc = LinearSVC(max_iter=100000, class_weight='balanced')
+svc = LinearSVC(max_iter=1000, class_weight='balanced')
 
 classifier = GridSearchCV(svc, {'C': [2**x for x in range(-15,17)]}, cv=5,
                             scoring='f1', n_jobs=20, pre_dispatch=20)
@@ -41,6 +41,10 @@ classifier = GridSearchCV(svc, {'C': [2**x for x in range(-15,17)]}, cv=5,
 classifier.fit(x_train, y_train)
 
 y_pred = classifier.predict(x_test)
+
+# import pdb
+# pdb.set_trace()
+
 print("Precision:", precision_score(y_test, y_pred))
 print("Recall:", recall_score(y_test, y_pred))
 print("F1:", f1_score(y_test, y_pred))

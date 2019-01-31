@@ -30,7 +30,7 @@ set_session(tf.Session(config=config))
 batch_size = 64
 filters = 250
 kernel_size = 3
-epochs = 5
+epochs = 10
 
 def dump_data(file_name, data):
 
@@ -83,7 +83,7 @@ def transform(abstracts_file, mesh_file):
     abstracts = [text.text_to_word_sequence(a) for a in abstracts]
 
     print("Vectorizing abstracts..")
-    abstracts = vectorize(abstracts, vector_model.vocab, max_len=500)
+    abstracts = vectorize(abstracts, vector_model.vocab, max_len=400)
     print("Abstracts shape:", abstracts.shape)
     #print(np.dtype(abstracts[0]))
     vector_model_length = len(vector_model.vocab)
@@ -133,7 +133,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     model = Model(input_layer, output_layer)
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=0.0009))
+                optimizer=Adam(lr=0.001))
 
     print(model.summary())
 
@@ -144,23 +144,29 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
             epochs=1,
             validation_data=[abstracts_test, labels_test])
         print("Predicting probabilities..")
-        prob_labels = model.predict(abstracts_test)
-        # label_indices = [np.argpartition(array, -15)[-15:] for array in prob_labels]
+        labels_prob = model.predict(abstracts_test)
+        # label_indices = [np.argpartition(array, -15)[-15:] for array in labels_prob]
 
-        # pred_labels = []
-        # for i, array in tqdm(enumerate(prob_labels), desc="Probs to labels"):
+        # labels_pred = []
+        # for i, array in tqdm(enumerate(labels_prob), desc="Probs to labels"):
         #     temp_array = np.zeros(len(array))
         #     for j in label_indices[i]:     
         #         temp_array[j] = 1
-        #     pred_labels.append(temp_array)
-        # pred_labels = np.array(pred_labels)
+        #     labels_pred.append(temp_array)
+        # labels_pred = np.array(labels_pred)
         print("Probabilities to labels..")
-        pred_labels = lil_matrix(prob_labels.shape, dtype='b')
-        pred_labels[prob_labels>0.5] = 1
-        #import pdb
-        #pdb.set_trace()
+        labels_pred = lil_matrix(labels_prob.shape, dtype='b')
+        labels_pred[labels_prob>0.5] = 1
+        false_positives = lil_matrix(labels_prob.shape)
+        false_positives[labels_pred.nonzero()] = 1
+        false_positives[labels_test.nonzero()] = 0
+        print(false_positives)
+
+        # false_positives = [[1 if (labels_pred[j][i] == 1) and (labels_test[j][i] == 0) else 0 for i in range(labels_pred.shape[1])] for j in range(labels_pred.shape[0])]
+        import pdb
+        pdb.set_trace()
         print("Epoch", epoch + 1)
-        precision, recall, f1, _ = precision_recall_fscore_support(labels_test, pred_labels, average='micro')
+        precision, recall, f1, _ = precision_recall_fscore_support(labels_test, labels_pred, average='micro')
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")

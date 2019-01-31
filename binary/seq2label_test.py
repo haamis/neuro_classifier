@@ -129,9 +129,9 @@ print(model.summary())
 
 for epoch in range(epochs):
     model_hist = model.fit(abstracts_train, is_neuro_train,
-            batch_size=batch_size,
-            epochs=1,
-            validation_data=(abstracts_test, is_neuro_test))
+                            batch_size=batch_size,
+                            epochs=1,
+                            validation_data=(abstracts_test, is_neuro_test))
     precision = model_hist.history['val_precision'][0]
     recall = model_hist.history['val_recall'][0]
     f_score = (2.0 * precision * recall) / (precision + recall)
