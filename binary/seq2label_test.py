@@ -22,7 +22,7 @@ set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 64
-filters = 250
+filters = 1000
 kernel_size = 3
 epochs = 25
 
@@ -107,7 +107,7 @@ embedding_layer = Embedding(vector_model_length+2,
                     mask_zero=False, weights=[word_embeddings])(input_layer)
 
 conv_res = []
-for width in range(2,5):
+for width in range(2,6):
 
     conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(embedding_layer)
     pooled = (GlobalMaxPooling1D())(conv_result) 
@@ -128,6 +128,8 @@ model.compile(loss='categorical_crossentropy',
 print(model.summary())
 
 for epoch in range(epochs):
+    cur_batch_size = min(batch_size + int(0.125 * epoch * batch_size), 320)
+    print("batch size:", cur_batch_size)
     model_hist = model.fit(abstracts_train, is_neuro_train,
                             batch_size=batch_size,
                             epochs=1,

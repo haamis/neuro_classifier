@@ -1,11 +1,11 @@
 import sys, pickle
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.svm import LinearSVC
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import precision_score, recall_score, f1_score, hamming_loss
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 def load_data(file_name):
     
@@ -28,7 +28,7 @@ print("Splitting..")
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
 del x,y # Free up ~3 gigabytes (with full dataset).
 
-classifier = OneVsRestClassifier(LinearSVC(), n_jobs=20)
+classifier = GridSearchCV(OneVsRestClassifier(LinearSVC(), n_jobs=20), {'estimator__C': [0.0001, 0.001, 0.01, 0.1]}, cv=5, scoring='f1_micro')
 
 print("Classifying..")
 
