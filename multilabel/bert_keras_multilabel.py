@@ -8,7 +8,7 @@ import keras.backend as K
 from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, GlobalMaxPooling1D
+from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, GlobalMaxPooling1D, Lambda, LSTM, TimeDistributed
 from keras.models import Model
 from keras.preprocessing import sequence, text
 from keras.optimizers import Adam
@@ -27,7 +27,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score, precision_r
 from tqdm import tqdm
 
 config = tf.ConfigProto()
-#config.gpu_options.allow_growth = True
+config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
@@ -35,16 +35,16 @@ batch_size = 64
 filters = 250
 kernel_size = 3
 epochs = 100
-maxlen = 100
+maxlen = 384
+
 
 def dump_data(file_name, data):
 
     with open(file_name, "wb") as f:
         pickle.dump(data, f)
- 
 
 def load_data(file_name):
-    
+
     with open(file_name, "rb") as f:
         return pickle.load(f)
 
@@ -98,24 +98,29 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
     biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
 
-    # extract = biobert_train.layers[-6](biobert.layers[-1].output)
+    extract = biobert_train.layers[-6](biobert.layers[-1].output)
 
     # print(extract)
 
-    #biobert.input[1] = Input(tensor=tf.zeros(maxlen))
-
     print(biobert.input)
-    print(biobert.output)
+    print(biobert.layers[-1].output)
 
-    rnn_layer1 = Bidirectional(GRU(100, return_sequences=False))(biobert.layers[-1].output)
+    #remove_mask_layer = Lambda(lambda x, mask: x)(biobert.layers[-1].output)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(rnn_layer1)
+    #rnn_layer1 = Bidirectional(GRU(768, return_sequences=False))(remove_mask_layer)
+
+    #conv_layer1 = Conv1D(250, 3, activation='relu')(remove_mask_layer)
+    #pooled = GlobalMaxPooling1D(conv_layer1)
+
+    meme = Dense(768, activation='tanh')(extract)
+
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(meme)
 
     model = Model(biobert.input, output_layer)
 
     print(model.summary(line_length=115))
 
-    learning_rate = 0.001
+    learning_rate = 0.1
 
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))
@@ -125,7 +130,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
         #learning_rate -= 0.0001
-        cur_batch_size = min(batch_size + int(1 * epoch * batch_size), 64)
+        cur_batch_size = min(batch_size + int(0.125 * epoch * batch_size), 256)
         print("batch size:", cur_batch_size)
         # model.compile(loss='binary_crossentropy',
         #         optimizer=Adam(lr=learning_rate))

@@ -34,7 +34,8 @@ set_session(tf.Session(config=config))
 batch_size = 64
 filters = 250
 kernel_size = 3
-epochs = 100
+epochs = 250
+max_len = 384
 
 def dump_data(file_name, data):
 
@@ -88,7 +89,7 @@ def transform(abstracts_file, mesh_file):
     abstracts = [text.text_to_word_sequence(a) for a in abstracts]
 
     print("Vectorizing abstracts..")
-    abstracts = vectorize(abstracts, vector_model.vocab, max_len=200)
+    abstracts = vectorize(abstracts, vector_model.vocab, max_len=max_len)
     print("Abstracts shape:", abstracts.shape)
     #print(np.dtype(abstracts[0]))
     vector_model_length = len(vector_model.vocab)
@@ -124,11 +125,11 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     #dropout_layer1 = Dropout(0.2)(embedding_layer)
 
-    rnn_layer1 = Bidirectional(LSTM(100, return_sequences=True))(embedding_layer)
+    rnn_layer1 = Bidirectional(LSTM(384, return_sequences=True))(embedding_layer)
 
     #dropout_layer3 = Dropout(0.2)(rnn_layer1)
 
-    rnn_layer2 = Bidirectional(LSTM(100, return_sequences=False))(rnn_layer1)
+    rnn_layer2 = Bidirectional(LSTM(384, return_sequences=False))(rnn_layer1)
 
     #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(dropout_layer1)
     #pooled = GlobalMaxPooling1D()(conv_result)
@@ -159,7 +160,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
         #learning_rate -= 0.0001
-        cur_batch_size = min(batch_size + int(1 * epoch * batch_size), 128)
+        cur_batch_size = min(batch_size + int(0.25 * epoch * batch_size), 512)
         print("batch size:", cur_batch_size)
         # model.compile(loss='binary_crossentropy',
         #         optimizer=Adam(lr=learning_rate))
