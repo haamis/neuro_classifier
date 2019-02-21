@@ -8,12 +8,11 @@ import keras.backend as K
 from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, GlobalMaxPooling1D, Lambda
+from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, GlobalMaxPooling1D, Lambda, LSTM, TimeDistributed
 from keras.models import Model
 from keras.preprocessing import sequence, text
 from keras.optimizers import Adam
 from keras.layers import CuDNNGRU as GRU
-from keras.layers import CuDNNLSTM as LSTM
 from keras.callbacks import Callback
 
 from keras_bert.loader import load_trained_model_from_checkpoint
@@ -97,7 +96,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     #dummy_input = Input(tensor=tf.zeros(512))
 
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
-    #biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
+    biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
 
     #extract = biobert_train.layers[-6](biobert.layers[-1].output)
 
@@ -109,21 +108,10 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     # Drop mask from bert output.
     drop_mask_layer = Lambda(lambda x, mask: x)(biobert.layers[-1].output)
 
-    rnn_layer1 = Bidirectional(LSTM(768, return_sequences=False))(drop_mask_layer)
+    rnn_layer1 = Bidirectional(GRU(768, return_sequences=False))(drop_mask_layer)
 
-    #rnn_layer2 = Bidirectional(LSTM(768, return_sequences=True))(rnn_layer1)
-
-    # conv_layer1 = Conv1D(250, 3, activation='relu')(drop_mask_layer)
-    # pooled = GlobalMaxPooling1D()(conv_layer1)
-
-    # conv_res = []
-    # for width in range(2,5):
-
-    #     conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(drop_mask_layer)
-    #     pooled = GlobalMaxPooling1D()(conv_result)
-    #     conv_res.append(pooled)
-
-    # concatenated = Concatenate()(conv_res)
+    #conv_layer1 = Conv1D(250, 3, activation='relu')(remove_mask_layer)
+    #pooled = GlobalMaxPooling1D(conv_layer1)
 
     #meme = Dense(768, activation='tanh')(extract)
 
@@ -131,7 +119,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     model = Model(biobert.input, output_layer)
 
-    print(model.summary(line_length=118))
+    print(model.summary(line_length=115))
 
     learning_rate = 0.001
 
