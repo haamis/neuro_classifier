@@ -11,7 +11,7 @@ from keras.backend.tensorflow_backend import set_session
 from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, GlobalMaxPooling1D, Lambda
 from keras.models import Model
 from keras.preprocessing import sequence, text
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD
 from keras.layers import CuDNNGRU as GRU
 from keras.layers import CuDNNLSTM as LSTM
 from keras.callbacks import Callback
@@ -33,9 +33,10 @@ set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 64
+max_batch_size = 64
 filters = 250
 kernel_size = 3
-epochs = 100
+epochs = 1000
 maxlen = 384
 
 
@@ -97,21 +98,24 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     #dummy_input = Input(tensor=tf.zeros(512))
 
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
-    #biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
+    biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
 
     #extract = biobert_train.layers[-6](biobert.layers[-1].output)
 
-    # print(extract)
+    #print(biobert.summary())
+    #print(biobert_train.summary())
 
     print(biobert.input)
     print(biobert.layers[-1].output)
 
     # Drop mask from bert output.
-    drop_mask_layer = Lambda(lambda x, mask: x)(biobert.layers[-1].output)
+    #drop_mask_layer = Lambda(lambda x, mask: x)(biobert.layers[-1].output)
 
-    rnn_layer1 = Bidirectional(LSTM(768, return_sequences=False))(drop_mask_layer)
+    #rnn_layer1 = Bidirectional(LSTM(768, return_sequences=True))(drop_mask_layer)
 
     #rnn_layer2 = Bidirectional(LSTM(768, return_sequences=True))(rnn_layer1)
+
+    #rnn_layer3 = Bidirectional(LSTM(768, return_sequences=False))(rnn_layer2)
 
     # conv_layer1 = Conv1D(250, 3, activation='relu')(drop_mask_layer)
     # pooled = GlobalMaxPooling1D()(conv_layer1)
@@ -127,7 +131,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     #meme = Dense(768, activation='tanh')(extract)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(rnn_layer1)
+    print(tf.gather_nd(biobert.layers[-1].output, [[[0]]]))
+
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(tf.gather_nd(biobert.layers[-1].output, [[[0]]]))
 
     model = Model(biobert.input, output_layer)
 
@@ -136,14 +142,14 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     learning_rate = 0.001
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=learning_rate))
+                optimizer=SGD(lr=0.01, momentum=0.9, nesterov=True))
 
     #print(model.summary(line_length=115))
 
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
         #learning_rate -= 0.0001
-        cur_batch_size = min(batch_size + int(0.125 * epoch * batch_size), 64)
+        cur_batch_size = min(batch_size + int(0.125 * epoch * batch_size), max_batch_size)
         print("batch size:", cur_batch_size)
         # model.compile(loss='binary_crossentropy',
         #         optimizer=Adam(lr=learning_rate))
