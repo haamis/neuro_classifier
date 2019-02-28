@@ -28,7 +28,7 @@ print("Splitting..")
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
 del x,y # Free up ~3 gigabytes (with full dataset).
 
-classifier = GridSearchCV(OneVsRestClassifier(LinearSVC(), n_jobs=20), {'estimator__C': [0.0001, 0.001, 0.01, 0.1]}, cv=5, scoring='f1_micro')
+classifier = GridSearchCV(OneVsRestClassifier(LinearSVC(), n_jobs=20), {'estimator__C': [1, 10]}, cv=5, scoring='f1_micro')
 
 print("Classifying..")
 
@@ -41,3 +41,6 @@ print(y_pred[:])
 print("Precision:", precision_score(y_test, y_pred, average='micro'))
 print("Recall:", recall_score(y_test, y_pred, average='micro'))
 print("F1:", f1_score(y_test, y_pred, average='micro'))
+
+with open('../partial_svm', 'wb') as f:
+    pickle.dump(classifier, f)

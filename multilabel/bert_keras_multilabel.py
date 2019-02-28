@@ -8,7 +8,7 @@ import keras.backend as K
 from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, GlobalMaxPooling1D, Lambda
+from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, Flatten, GlobalMaxPooling1D, Lambda
 from keras.models import Model
 from keras.preprocessing import sequence, text
 from keras.optimizers import Adam, SGD
@@ -33,7 +33,7 @@ set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 64
-max_batch_size = 64
+max_batch_size = 512
 filters = 250
 kernel_size = 3
 epochs = 1000
@@ -131,9 +131,13 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     #meme = Dense(768, activation='tanh')(extract)
 
-    print(tf.gather_nd(biobert.layers[-1].output, [[[0]]]))
+    print(tf.slice(biobert.layers[-1].output, [0, 0, 0], [-1, 1, -1]))
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(tf.gather_nd(biobert.layers[-1].output, [[[0]]]))
+    slice_layer = Lambda(lambda x: tf.slice(x, [0, 0, 0], [-1, 1, -1]))(biobert.layers[-1].output)
+
+    flatten_layer = Flatten()(slice_layer)
+
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(flatten_layer)
 
     model = Model(biobert.input, output_layer)
 
@@ -142,9 +146,11 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     learning_rate = 0.001
 
     model.compile(loss='binary_crossentropy',
-                optimizer=SGD(lr=0.01, momentum=0.9, nesterov=True))
+                optimizer=Adam())#SGD(lr=0.2, momentum=0.9))
 
     #print(model.summary(line_length=115))
+
+    best_f1 = 0.0
 
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
@@ -169,5 +175,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
+        if f1 > best_f1:
+            best_f1 = f1
+            print("Saving model..\n")
+            model.save('bert_partial_model.h5')
 
 build_model(*transform(sys.argv[1], sys.argv[2]))

@@ -125,27 +125,27 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     #dropout_layer1 = Dropout(0.2)(embedding_layer)
 
-    rnn_layer1 = Bidirectional(LSTM(384, return_sequences=True))(embedding_layer)
+    # rnn_layer1 = Bidirectional(LSTM(384, return_sequences=True))(embedding_layer)
 
     #dropout_layer3 = Dropout(0.2)(rnn_layer1)
 
-    rnn_layer2 = Bidirectional(LSTM(384, return_sequences=False))(rnn_layer1)
+    # rnn_layer2 = Bidirectional(LSTM(384, return_sequences=False))(rnn_layer1)
 
     #conv_result = Conv1D(filters, 3, padding='valid', activation='relu', strides=1)(dropout_layer1)
     #pooled = GlobalMaxPooling1D()(conv_result)
 
-    # conv_res = []
-    # for width in range(2,5):
+    conv_res = []
+    for width in range(2,5):
 
-    #     conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(dropout_layer1)
-    #     pooled = (GlobalMaxPooling1D())(conv_result) 
-    #     conv_res.append(pooled)
+        conv_result = Conv1D(filters, width, padding='valid', activation='relu', strides=1)(embedding_layer)
+        pooled = (GlobalMaxPooling1D())(conv_result) 
+        conv_res.append(pooled)
 
-    # concatenated = (Concatenate())(conv_res)
+    concatenated = (Concatenate())(conv_res)
 
     #dropout_layer2 = Dropout(0.2)(rnn_layer2)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(rnn_layer2)
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(concatenated)
 
     model = Model(input_layer, output_layer)
 
@@ -156,6 +156,8 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 		        sample_weight_mode=None)
 
     print(model.summary())
+
+    best_f1 = 0.0
 
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
@@ -180,6 +182,10 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
+        if f1 > best_f1:
+            best_f1 = f1
+            print("Saving model..\n")
+            model.save('w2v_partial_model.h5')
 
 build_model(*transform(sys.argv[1], sys.argv[2]))
 
