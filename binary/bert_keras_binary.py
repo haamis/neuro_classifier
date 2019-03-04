@@ -3,6 +3,8 @@ import tensorflow as tf
 import numpy as np
 import keras.backend as K
 
+#from timeit import default_timer as timer
+
 from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
@@ -20,7 +22,7 @@ from keras_bert.bert import *
 from bert import tokenization
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_fscore_support
 
 from tqdm import tqdm
@@ -72,11 +74,11 @@ def transform(abstracts_file, mesh_file):
     print("Token_vectors shape:", token_vectors.shape)
 
     print("Binarizing labels..")
-    mlb = MultiLabelBinarizer(sparse_output=True)
-    labels = mlb.fit_transform(labels)
+    one_hot_encoder = OneHotEncoder(sparse=False, categories='auto')
+    labels = one_hot_encoder.fit_transform(np.asarray(labels).reshape(-1,1))
     labels = labels.astype('b')
     print("Labels shape:", labels.shape)
-    print(np.dtype(labels))
+    #print(np.dtype(labels))
 
     print("Splitting..")
     token_vectors_train, token_vectors_test, labels_train, labels_test = train_test_split(token_vectors, labels, test_size=0.1)
@@ -88,11 +90,13 @@ def transform(abstracts_file, mesh_file):
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len, inv_vocab):
 
+
     checkpoint_file = "../../biobert_pubmed/biobert_model.ckpt"
     config_file = "../../biobert_pubmed/bert_config.json"
 
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
     #biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
+
 
     print(biobert.input)
     print(biobert.layers[-1].output)
@@ -112,7 +116,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     learning_rate = 0.001
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam())#SGD(lr=0.2, momentum=0.9))
+                optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0
 
