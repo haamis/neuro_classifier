@@ -6,13 +6,9 @@ import keras.backend as K
 from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import Bidirectional, Concatenate, Conv1D, Dense, Dropout, Input, Flatten, GlobalMaxPooling1D, Lambda
+from keras.layers import Dense, Flatten, Lambda
 from keras.models import Model
-from keras.preprocessing import sequence, text
 from keras.optimizers import Adam, SGD
-from keras.layers import CuDNNGRU as GRU
-from keras.layers import CuDNNLSTM as LSTM
-from keras.callbacks import Callback
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert.bert import *
@@ -31,9 +27,7 @@ set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 64
-max_batch_size = 512
-filters = 250
-kernel_size = 3
+max_batch_size = 64
 epochs = 1000
 maxlen = 384
 
@@ -51,10 +45,10 @@ def load_data(file_name):
 def tokenize(abstracts, maxlen=512):
     tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt")
     ret_val = []
-    for abstract in abstracts:
+    for abstract in tqdm(abstracts,desc="Tokenizing abstracts"):
         abstract = ["[CLS]"] + tokenizer.tokenize(abstract[0:maxlen-2]) + ["[SEP]"]
         ret_val.append(abstract)
-    return ret_val, tokenizer.vocab, tokenizer.inv_vocab
+    return ret_val, tokenizer.vocab
 
 def transform(abstracts_file, mesh_file):
 
@@ -64,7 +58,7 @@ def transform(abstracts_file, mesh_file):
     labels = load_data("./" + mesh_file)
 
     print("Tokenizing..")
-    abstracts, vocab, inv_vocab = tokenize(abstracts, maxlen=maxlen)
+    abstracts, vocab = tokenize(abstracts, maxlen=maxlen)
 
     print("Vectorizing..")
     token_vectors = np.asarray( [np.asarray( [vocab[token] for token in abstract] + [0] * (maxlen - len(abstract)) ) for abstract in abstracts] )
@@ -83,10 +77,10 @@ def transform(abstracts_file, mesh_file):
 
     _, sequence_len = token_vectors_train.shape
 
-    return token_vectors_train, token_vectors_test, labels_train, labels_test, sequence_len, inv_vocab
+    return token_vectors_train, token_vectors_test, labels_train, labels_test, sequence_len
 
 
-def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len, inv_vocab):
+def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
 
     checkpoint_file = "../../biobert_pubmed/biobert_model.ckpt"
     config_file = "../../biobert_pubmed/bert_config.json"
@@ -109,10 +103,10 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     print(model.summary(line_length=118))
 
-    learning_rate = 0.001
+    learning_rate = 0.01
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam())#SGD(lr=0.2, momentum=0.9))
+                optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0
 
