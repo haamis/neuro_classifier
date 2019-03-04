@@ -57,7 +57,6 @@ def transform(abstracts_file, mesh_file):
     abstracts = load_data("./" + abstracts_file)
     labels = load_data("./" + mesh_file)
 
-    print("Tokenizing..")
     abstracts, vocab = tokenize(abstracts, maxlen=maxlen)
 
     print("Vectorizing..")
@@ -136,6 +135,6 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         if f1 > best_f1:
             best_f1 = f1
             print("Saving model..\n")
-            model.save('bert_partial_model.h5')
+            model.save(sys.argv[3])
 
 build_model(*transform(sys.argv[1], sys.argv[2]))

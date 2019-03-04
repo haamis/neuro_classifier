@@ -45,7 +45,7 @@ def load_data(file_name):
 def tokenize(abstracts, maxlen=512):
     tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt")
     ret_val = []
-    for abstract in abstracts:
+    for abstract in tqdm(abstracts, desc="Tokenizing abstracts"):
         abstract = ["[CLS]"] + tokenizer.tokenize(abstract[0:maxlen-2]) + ["[SEP]"]
         ret_val.append(abstract)
     return ret_val, tokenizer.vocab
@@ -57,7 +57,6 @@ def transform(abstracts_file, mesh_file):
     abstracts = load_data("./" + abstracts_file)
     labels = load_data("./" + mesh_file)
 
-    print("Tokenizing..")
     abstracts, vocab = tokenize(abstracts, maxlen=maxlen)
 
     print("Vectorizing..")
@@ -82,7 +81,6 @@ def transform(abstracts_file, mesh_file):
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
 
-
     checkpoint_file = "../../biobert_pubmed/biobert_model.ckpt"
     config_file = "../../biobert_pubmed/bert_config.json"
 
@@ -105,7 +103,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     print(model.summary(line_length=118))
 
-    learning_rate = 0.001
+    learning_rate = 0.01
 
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
@@ -138,6 +136,6 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         if f1 > best_f1:
             best_f1 = f1
             print("Saving model..\n")
-            model.save('bert_partial_model.h5')
+            model.save(sys.argv[3])
 
 build_model(*transform(sys.argv[1], sys.argv[2]))
