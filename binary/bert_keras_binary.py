@@ -88,6 +88,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
     #biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
 
+    # Unfreeze bert layers.
+    # for layer in biobert.layers[:]:
+    #     layer.trainable = True
 
     print(biobert.input)
     print(biobert.layers[-1].output)
@@ -104,13 +107,14 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     print(model.summary(line_length=118))
 
-    learning_rate = 0.01
+    learning_rate = 0.00005
 
     model.compile(loss='categorical_crossentropy',
                 metrics=[keras_metrics.precision(), keras_metrics.recall()],
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0
+    stale_epochs = 0
 
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
@@ -133,7 +137,12 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
         if f1 > best_f1:
             best_f1 = f1
+            stale_epochs = 0
             print("Saving model..\n")
             model.save(sys.argv[3])
+        else:
+            stale_epochs += 1
+            if stale_epochs >= 5:
+                break
 
 build_model(*transform(sys.argv[1], sys.argv[2]))
