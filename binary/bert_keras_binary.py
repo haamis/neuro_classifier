@@ -47,7 +47,6 @@ def tokenize(abstracts, maxlen=512):
     ret_val = []
     for abstract in tqdm(abstracts, desc="Tokenizing abstracts"):
         abstract = ["[CLS]"] + tokenizer.tokenize(abstract[0:maxlen-2]) + ["[SEP]"]
-        input(abstract)
         ret_val.append(abstract)
     return ret_val, tokenizer.vocab
 
@@ -106,7 +105,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     learning_rate = 0.01
 
-    model.compile(loss='binary_crossentropy',
+    model.compile(loss='categorical_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0

@@ -43,7 +43,7 @@ def load_data(file_name):
         return pickle.load(f)
 
 def tokenize(abstracts, maxlen=512):
-    tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt")
+    tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt", do_lower_case=False)
     ret_val = []
     for abstract in tqdm(abstracts,desc="Tokenizing abstracts"):
         abstract = ["[CLS]"] + tokenizer.tokenize(abstract[0:maxlen-2]) + ["[SEP]"]
