@@ -1,5 +1,6 @@
 import pickle, sys
 import tensorflow as tf
+import keras_metrics
 import numpy as np
 import keras.backend as K
 
@@ -106,6 +107,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     learning_rate = 0.01
 
     model.compile(loss='categorical_crossentropy',
+                metrics=[keras_metrics.precision(), keras_metrics.recall()],
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0
@@ -118,21 +120,17 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         # model.compile(loss='binary_crossentropy',
         #         optimizer=Adam(lr=learning_rate))
         print("learning rate:", K.eval(model.optimizer.lr))
-        model.fit([abstracts_train, np.zeros_like(abstracts_train)], labels_train,
+        model_hist = model.fit([abstracts_train, np.zeros_like(abstracts_train)], labels_train,
             batch_size=cur_batch_size,
             epochs=1,
             validation_data=[[abstracts_test, np.zeros_like(abstracts_test)], labels_test])
-        print("Predicting probabilities..")
-        labels_prob = model.predict([abstracts_test, np.zeros_like(abstracts_test)])
 
-        print("Probabilities to labels..")
-        labels_pred = np.ndarray(labels_prob.shape, dtype='b')
-        labels_pred[labels_prob>0.5] = 1
+        precision = model_hist.history['val_precision'][0]
+        recall = model_hist.history['val_recall'][0]
+        f1 = (2.0 * precision * recall) / (precision + recall)
 
-        precision, recall, f1, _ = precision_recall_fscore_support(labels_test, labels_pred, average='micro')
-        print("Precision:", precision)
-        print("Recall:", recall)
         print("F1-score:", f1, "\n")
+
         if f1 > best_f1:
             best_f1 = f1
             print("Saving model..\n")
