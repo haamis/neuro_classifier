@@ -17,7 +17,7 @@ from bert import tokenization
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_fscore_support
+from sklearn.metrics import precision_recall_fscore_support
 
 from tqdm import tqdm
 
@@ -30,6 +30,7 @@ batch_size = 64
 max_batch_size = 64
 epochs = 1000
 maxlen = 384
+freeze_bert = True
 
 
 def dump_data(file_name, data):
@@ -87,6 +88,11 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
     #biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
 
+    # Unfreeze bert layers.
+    if not freeze_bert:
+        for layer in biobert.layers[:]:
+            layer.trainable = True
+
     print(biobert.input)
     print(biobert.layers[-1].output)
 
@@ -102,23 +108,23 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     print(model.summary(line_length=118))
 
-    learning_rate = 0.01
+    if freeze_bert:
+        learning_rate = 0.001     
+    else:
+        learning_rate = 0.00005
 
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0
+    stale_epochs = 0
 
     for epoch in range(epochs):
         print("Epoch", epoch + 1)
-        #learning_rate -= 0.0001
-        cur_batch_size = min(batch_size + int(0.125 * epoch * batch_size), max_batch_size)
-        print("batch size:", cur_batch_size)
-        # model.compile(loss='binary_crossentropy',
-        #         optimizer=Adam(lr=learning_rate))
+        print("batch size:", batch_size)
         print("learning rate:", K.eval(model.optimizer.lr))
         model.fit([abstracts_train, np.zeros_like(abstracts_train)], labels_train,
-            batch_size=cur_batch_size,
+            batch_size=batch_size,
             epochs=1,
             validation_data=[[abstracts_test, np.zeros_like(abstracts_test)], labels_test])
         print("Predicting probabilities..")
@@ -132,9 +138,15 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
+        
         if f1 > best_f1:
             best_f1 = f1
+            stale_epochs = 0
             print("Saving model..\n")
             model.save(sys.argv[3])
+        else:
+            stale_epochs += 1
+            if stale_epochs >= 10:
+                break
 
 build_model(*transform(sys.argv[1], sys.argv[2]))

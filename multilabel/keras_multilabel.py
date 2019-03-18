@@ -20,7 +20,7 @@ from keras.callbacks import Callback
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_fscore_support
+from sklearn.metrics import precision_recall_fscore_support
 
 from gensim.models import KeyedVectors
 

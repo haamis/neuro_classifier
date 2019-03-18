@@ -89,6 +89,7 @@ _, longest_train_sent = abstracts_train.shape
 print("Vectorizing test set..")
 abstracts_test = vectorize(abstracts_test, vector_model.vocab, max_len=longest_train_sent)
 print("Test set shape:", abstracts_test.shape)
+print(is_neuro_train)
 vector_model_length = len(vector_model.vocab)
 del vector_model # Memory management :p
 
