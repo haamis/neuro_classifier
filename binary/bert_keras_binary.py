@@ -107,7 +107,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     print(model.summary(line_length=118))
 
-    learning_rate = 0.00002
+    learning_rate = 0.00005
 
     model.compile(loss='categorical_crossentropy',
                 metrics=[keras_metrics.precision(), keras_metrics.recall()],

@@ -25,8 +25,7 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 64
-max_batch_size = 64
+batch_size = 8
 epochs = 1000
 maxlen = 384
 freeze_bert = False
@@ -82,7 +81,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
     custom_objects = get_custom_objects()
     custom_objects["tf"] = tf
 
-    model = load_model(sys.argv[1], custom_objects=custom_objects)
+    model = load_model(sys.argv[3], custom_objects=custom_objects)
 
     # Unfreeze bert layers.
     if not freeze_bert:
@@ -90,12 +89,12 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
             layer.trainable = True
 
     print(model.summary(line_length=118))
-
+    
     learning_rate = 0.00005
     
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
-
+    
     best_f1 = 0.0
     stale_epochs = 0
 
@@ -123,7 +122,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
             best_f1 = f1
             stale_epochs = 0
             print("Saving model..\n")
-            model.save(sys.argv[3])
+            model.save(sys.argv[4])
         else:
             stale_epochs += 1
             if stale_epochs >= 10:

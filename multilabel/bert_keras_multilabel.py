@@ -109,7 +109,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
     print(model.summary(line_length=118))
 
     if freeze_bert:
-        learning_rate = 0.001     
+        learning_rate = 0.01     
     else:
         learning_rate = 0.00005
 
@@ -143,7 +143,17 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
             best_f1 = f1
             stale_epochs = 0
             print("Saving model..\n")
+
+            # Unfreezing bert before saving, for debug.
+            for layer in biobert.layers[:]:
+                layer.trainable = True
+            
             model.save(sys.argv[3])
+
+            # Freeze it back for training if necessary.
+            if freeze_bert:
+                for layer in biobert.layers[:]:
+                    layer.trainable = False
         else:
             stale_epochs += 1
             if stale_epochs >= 10:
