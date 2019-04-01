@@ -9,6 +9,7 @@ from keras.backend.tensorflow_backend import set_session
 from keras.layers import Dense, Flatten, Lambda
 from keras.models import Model
 from keras.optimizers import Adam, SGD
+from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert.bert import *
@@ -27,7 +28,7 @@ set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 64
-max_batch_size = 64
+gpus = 2
 epochs = 1000
 maxlen = 384
 freeze_bert = True
@@ -104,7 +105,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     output_layer = Dense(labels_train.shape[1], activation='sigmoid')(flatten_layer)
 
-    model = Model(biobert.input, output_layer)
+    base_model = Model(biobert.input, output_layer)
+
+    model = multi_gpu_model(base_model, gpus=gpus, cpu_merge=True, cpu_relocation=False)
 
     print(model.summary(line_length=118))
 
@@ -124,7 +127,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("batch size:", batch_size)
         print("learning rate:", K.eval(model.optimizer.lr))
         model.fit([abstracts_train, lil_matrix(abstracts_train.shape)], labels_train,
-            batch_size=batch_size,
+            batch_size=batch_size*gpus,
             epochs=1,
             validation_data=[[abstracts_test, lil_matrix(abstracts_test.shape)], labels_test])
         print("Predicting probabilities..")
@@ -148,7 +151,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
             for layer in biobert.layers[:]:
                 layer.trainable = True
             
-            model.save(sys.argv[3])
+            base_model.save(sys.argv[3])
 
             # Freeze it back for training if necessary.
             if freeze_bert:
