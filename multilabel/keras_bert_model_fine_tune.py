@@ -6,12 +6,12 @@ import keras.backend as K
 from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
-from keras.layers import Dense, Flatten, Lambda
-from keras.models import Model
+from keras.models import load_model
 from keras.optimizers import Adam, SGD
+from keras.utils import multi_gpu_model
 
-from keras_bert.loader import load_trained_model_from_checkpoint
-from keras_bert.bert import *
+#from keras_bert.bert import *
+from keras_bert import get_custom_objects
 
 from bert import tokenization
 
@@ -26,11 +26,11 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 64
-max_batch_size = 64
-epochs = 1000
-maxlen = 384
-freeze_bert = True
+gpus = 1
+batch_size = 5
+epochs = 20
+maxlen = 512
+freeze_bert = False
 
 
 def dump_data(file_name, data):
@@ -75,47 +75,34 @@ def transform(abstracts_file, mesh_file):
     print("Splitting..")
     token_vectors_train, token_vectors_test, labels_train, labels_test = train_test_split(token_vectors, labels, test_size=0.1)
 
-    _, sequence_len = token_vectors_train.shape
-
-    return token_vectors_train, token_vectors_test, labels_train, labels_test, sequence_len
+    return token_vectors_train, token_vectors_test, labels_train, labels_test
 
 
-def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
+def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
 
-    checkpoint_file = "../../biobert_pubmed/biobert_model.ckpt"
-    config_file = "../../biobert_pubmed/bert_config.json"
+    custom_objects = get_custom_objects()
+    custom_objects["tf"] = tf
 
-    biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=False, seq_len=sequence_len)
-    #biobert_train = load_trained_model_from_checkpoint(config_file, checkpoint_file, training=True, seq_len=sequence_len)
+    if gpus > 1:
+        base_model = load_model(sys.argv[3], custom_objects=custom_objects)
+        model = multi_gpu_model(base_model, gpus=gpus, cpu_merge=True, cpu_relocation=False)
+    else:
+        model = load_model(sys.argv[3], custom_objects=custom_objects)
 
     # Unfreeze bert layers.
     if not freeze_bert:
-        for layer in biobert.layers[:]:
+        for layer in model.layers[:]:
             layer.trainable = True
-
-    print(biobert.input)
-    print(biobert.layers[-1].output)
-
-    print(tf.slice(biobert.layers[-1].output, [0, 0, 0], [-1, 1, -1]))
-
-    slice_layer = Lambda(lambda x: tf.slice(x, [0, 0, 0], [-1, 1, -1]))(biobert.layers[-1].output)
-
-    flatten_layer = Flatten()(slice_layer)
-
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(flatten_layer)
-
-    model = Model(biobert.input, output_layer)
 
     print(model.summary(line_length=118))
 
-    if freeze_bert:
-        learning_rate = 0.001     
-    else:
-        learning_rate = 0.00005
-
+    print("Number of GPUs in use:", gpus)
+    
+    learning_rate = 0.00005
+    
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
-
+    
     best_f1 = 0.0
     stale_epochs = 0
 
@@ -123,12 +110,12 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("Epoch", epoch + 1)
         print("batch size:", batch_size)
         print("learning rate:", K.eval(model.optimizer.lr))
-        model.fit([abstracts_train, lil_matrix(abstracts_train.shape)], labels_train,
+        model.fit([abstracts_train, np.zeros_like(abstracts_train)], labels_train,
             batch_size=batch_size,
             epochs=1,
-            validation_data=[[abstracts_test, lil_matrix(abstracts_test.shape)], labels_test])
+            validation_data=[[abstracts_test, np.zeros_like(abstracts_test)], labels_test])
         print("Predicting probabilities..")
-        labels_prob = model.predict([abstracts_test, lil_matrix(abstracts_test.shape)])
+        labels_prob = model.predict([abstracts_test, np.zeros_like(abstracts_test)])
 
         print("Probabilities to labels..")
         labels_pred = lil_matrix(labels_prob.shape, dtype='b')
@@ -143,20 +130,13 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
             best_f1 = f1
             stale_epochs = 0
             print("Saving model..\n")
-
-            # Unfreezing bert before saving, for debug.
-            for layer in biobert.layers[:]:
-                layer.trainable = True
-            
-            model.save(sys.argv[3])
-
-            # Freeze it back for training if necessary.
-            if freeze_bert:
-                for layer in biobert.layers[:]:
-                    layer.trainable = False
+            if gpus > 1:
+                base_model.save(sys.argv[4])
+            else:
+                model.save(sys.argv[4])
         else:
             stale_epochs += 1
-            if stale_epochs >= 10:
+            if stale_epochs >= 5:
                 break
 
 build_model(*transform(sys.argv[1], sys.argv[2]))

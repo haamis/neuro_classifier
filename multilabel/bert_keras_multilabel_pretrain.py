@@ -29,10 +29,9 @@ set_session(tf.Session(config=config))
 # set parameters:
 batch_size = 64
 gpus = 2
-epochs = 1000
-maxlen = 384
+epochs = 20
+maxlen = 512
 freeze_bert = True
-
 
 def dump_data(file_name, data):
 
@@ -105,11 +104,15 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     output_layer = Dense(labels_train.shape[1], activation='sigmoid')(flatten_layer)
 
-    base_model = Model(biobert.input, output_layer)
-
-    model = multi_gpu_model(base_model, gpus=gpus, cpu_merge=True, cpu_relocation=False)
+    if gpus > 1:
+        base_model = Model(biobert.input, output_layer)
+        model = multi_gpu_model(base_model, gpus=gpus, cpu_merge=True, cpu_relocation=False)
+    else:
+        model = Model(biobert.input, output_layer)
 
     print(model.summary(line_length=118))
+
+    print("Number of GPUs in use:", gpus)
 
     if freeze_bert:
         learning_rate = 0.001     
@@ -151,7 +154,10 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
             for layer in biobert.layers[:]:
                 layer.trainable = True
             
-            base_model.save(sys.argv[3])
+            if gpus > 1:
+                base_model.save(sys.argv[3])
+            else:
+                model.save(sys.argv[3])
 
             # Freeze it back for training if necessary.
             if freeze_bert:
