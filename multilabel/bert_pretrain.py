@@ -27,8 +27,8 @@ config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 64
-gpus = 2
+batch_size = 8
+gpus = 1
 epochs = 20
 maxlen = 512
 freeze_bert = True
