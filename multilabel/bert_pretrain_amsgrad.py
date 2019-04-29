@@ -46,12 +46,8 @@ def load_data(file_name):
 def tokenize(abstracts, maxlen=512):
     tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt", do_lower_case=False)
     ret_val = []
-    for abstract in tqdm(abstracts, desc="Tokenizing abstracts"):
-        #print("pre-token:", abstract)
-        #print("out", tokenizer.tokenize(abstract))
-        abstract = ["[CLS]"] + tokenizer.tokenize(abstract)[0:maxlen-2] + ["[SEP]"]
-        #print("post-token:", len(abstract))
-        #input()
+    for abstract in tqdm(abstracts,desc="Tokenizing abstracts"):
+        abstract = ["[CLS]"] + tokenizer.tokenize(abstract[0:maxlen-2]) + ["[SEP]"]
         ret_val.append(abstract)
     return ret_val, tokenizer.vocab
 
@@ -124,7 +120,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         learning_rate = 0.00005
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
+                optimizer=Adam(lr=learning_rate, amsgrad=True))#SGD(lr=0.2, momentum=0.9))
 
     best_f1 = 0.0
     stale_epochs = 0

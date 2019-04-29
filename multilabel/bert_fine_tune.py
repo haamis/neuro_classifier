@@ -7,7 +7,7 @@ from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
 from keras.models import load_model
-from keras.optimizers import Adam, SGD
+from keras.optimizers import Adam, Adamax, Nadam, SGD
 from keras.utils import multi_gpu_model
 
 #from keras_bert.bert import *
@@ -46,8 +46,12 @@ def load_data(file_name):
 def tokenize(abstracts, maxlen=512):
     tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt", do_lower_case=False)
     ret_val = []
-    for abstract in tqdm(abstracts,desc="Tokenizing abstracts"):
-        abstract = ["[CLS]"] + tokenizer.tokenize(abstract[0:maxlen-2]) + ["[SEP]"]
+    for abstract in tqdm(abstracts, desc="Tokenizing abstracts"):
+        #print("pre-token:", abstract)
+        #print("out", tokenizer.tokenize(abstract))
+        abstract = ["[CLS]"] + tokenizer.tokenize(abstract)[0:maxlen-2] + ["[SEP]"]
+        #print("post-token:", len(abstract))
+        #input()
         ret_val.append(abstract)
     return ret_val, tokenizer.vocab
 
@@ -97,12 +101,12 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
     print(model.summary(line_length=118))
 
     print("Number of GPUs in use:", gpus)
-    
+
     learning_rate = 0.00005
-    
+
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
-    
+
     best_f1 = 0.0
     stale_epochs = 0
 
@@ -125,7 +129,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
-        
+
         if f1 > best_f1:
             best_f1 = f1
             stale_epochs = 0
@@ -136,7 +140,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
                 model.save(sys.argv[4])
         else:
             stale_epochs += 1
-            if stale_epochs >= 5:
+            if stale_epochs >= 4:
                 break
 
 build_model(*transform(sys.argv[1], sys.argv[2]))
