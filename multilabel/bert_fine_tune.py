@@ -7,19 +7,13 @@ from scipy.sparse import lil_matrix
 
 from keras.backend.tensorflow_backend import set_session
 from keras.models import load_model
-from keras.optimizers import Adam, Adamax, Nadam, SGD
+from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
 
 #from keras_bert.bert import *
 from keras_bert import get_custom_objects
 
-from bert import tokenization
-
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import precision_recall_fscore_support
-
-from tqdm import tqdm
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -43,45 +37,6 @@ def load_data(file_name):
     with open(file_name, "rb") as f:
         return pickle.load(f)
 
-def tokenize(abstracts, maxlen=512):
-    tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt", do_lower_case=False)
-    ret_val = []
-    for abstract in tqdm(abstracts, desc="Tokenizing abstracts"):
-        #print("pre-token:", abstract)
-        #print("out", tokenizer.tokenize(abstract))
-        abstract = ["[CLS]"] + tokenizer.tokenize(abstract)[0:maxlen-2] + ["[SEP]"]
-        #print("post-token:", len(abstract))
-        #input()
-        ret_val.append(abstract)
-    return ret_val, tokenizer.vocab
-
-def transform(abstracts_file, mesh_file):
-
-    print("Reading input files..")
-
-    abstracts = load_data("./" + abstracts_file)
-    labels = load_data("./" + mesh_file)
-
-    abstracts, vocab = tokenize(abstracts, maxlen=maxlen)
-
-    print("Vectorizing..")
-    token_vectors = np.asarray( [np.asarray( [vocab[token] for token in abstract] + [0] * (maxlen - len(abstract)) ) for abstract in abstracts] )
-    del abstracts
-    print("Token_vectors shape:", token_vectors.shape)
-
-    print("Binarizing labels..")
-    mlb = MultiLabelBinarizer(sparse_output=True)
-    labels = mlb.fit_transform(labels)
-    labels = labels.astype('b')
-    print("Labels shape:", labels.shape)
-    print(np.dtype(labels))
-
-    print("Splitting..")
-    token_vectors_train, token_vectors_test, labels_train, labels_test = train_test_split(token_vectors, labels, test_size=0.1)
-
-    return token_vectors_train, token_vectors_test, labels_train, labels_test
-
-
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
 
     custom_objects = get_custom_objects()
@@ -102,7 +57,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
 
     print("Number of GPUs in use:", gpus)
 
-    learning_rate = 0.00005
+    learning_rate = 0.00002
 
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
@@ -114,12 +69,12 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
         print("Epoch", epoch + 1)
         print("batch size:", batch_size)
         print("learning rate:", K.eval(model.optimizer.lr))
-        model.fit([abstracts_train, np.zeros_like(abstracts_train)], labels_train,
-            batch_size=batch_size,
+        model.fit([abstracts_train, lil_matrix(abstracts_train.shape)], labels_train,
+            batch_size=batch_size*gpus,
             epochs=1,
-            validation_data=[[abstracts_test, np.zeros_like(abstracts_test)], labels_test])
+            validation_data=[[abstracts_test, lil_matrix(abstracts_test.shape)], labels_test])
         print("Predicting probabilities..")
-        labels_prob = model.predict([abstracts_test, np.zeros_like(abstracts_test)])
+        labels_prob = model.predict([abstracts_test, lil_matrix(abstracts_test.shape)])
 
         print("Probabilities to labels..")
         labels_pred = lil_matrix(labels_prob.shape, dtype='b')
@@ -143,4 +98,13 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
             if stale_epochs >= 4:
                 break
 
-build_model(*transform(sys.argv[1], sys.argv[2]))
+if __name__ == '__main__':
+
+    print("Reading input files..")
+
+    abstracts_train = load_data("./" + sys.argv[1])
+    abstracts_test = load_data("./" + sys.argv[2])
+    labels_train = load_data("./" + sys.argv[3])
+    labels_test = load_data("./" + sys.argv[4])
+
+    build_model(abstracts_train, abstracts_test, labels_train, labels_test)

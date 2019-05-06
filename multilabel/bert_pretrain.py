@@ -8,19 +8,13 @@ from scipy.sparse import lil_matrix
 from keras.backend.tensorflow_backend import set_session
 from keras.layers import Dense, Flatten, Lambda, Dropout
 from keras.models import Model
-from keras.optimizers import Adam, Adamax, Nadam, SGD
+from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert.bert import *
 
-from bert import tokenization
-
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import precision_recall_fscore_support
-
-from tqdm import tqdm
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -30,7 +24,6 @@ set_session(tf.Session(config=config))
 batch_size = 8
 gpus = 1
 epochs = 20
-maxlen = 512
 freeze_bert = True
 
 def dump_data(file_name, data):
@@ -42,47 +35,6 @@ def load_data(file_name):
 
     with open(file_name, "rb") as f:
         return pickle.load(f)
-
-def tokenize(abstracts, maxlen=512):
-    tokenizer = tokenization.FullTokenizer("../../biobert_pubmed/vocab.txt", do_lower_case=False)
-    ret_val = []
-    for abstract in tqdm(abstracts, desc="Tokenizing abstracts"):
-        #print("pre-token:", abstract)
-        #print("out", tokenizer.tokenize(abstract))
-        abstract = ["[CLS]"] + tokenizer.tokenize(abstract)[0:maxlen-2] + ["[SEP]"]
-        #print("post-token:", len(abstract))
-        #input()
-        ret_val.append(abstract)
-    return ret_val, tokenizer.vocab
-
-def transform(abstracts_file, mesh_file):
-
-    print("Reading input files..")
-
-    abstracts = load_data("./" + abstracts_file)
-    labels = load_data("./" + mesh_file)
-
-    abstracts, vocab = tokenize(abstracts, maxlen=maxlen)
-
-    print("Vectorizing..")
-    token_vectors = np.asarray( [np.asarray( [vocab[token] for token in abstract] + [0] * (maxlen - len(abstract)) ) for abstract in abstracts] )
-    del abstracts
-    print("Token_vectors shape:", token_vectors.shape)
-
-    print("Binarizing labels..")
-    mlb = MultiLabelBinarizer(sparse_output=True)
-    labels = mlb.fit_transform(labels)
-    labels = labels.astype('b')
-    print("Labels shape:", labels.shape)
-    print(np.dtype(labels))
-
-    print("Splitting..")
-    token_vectors_train, token_vectors_test, labels_train, labels_test = train_test_split(token_vectors, labels, test_size=0.1)
-
-    _, sequence_len = token_vectors_train.shape
-
-    return token_vectors_train, token_vectors_test, labels_train, labels_test, sequence_len
-
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
 
@@ -172,4 +124,16 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
             if stale_epochs >= 4:
                 break
 
-build_model(*transform(sys.argv[1], sys.argv[2]))
+if __name__ == '__main__':
+
+    print("Reading input files..")
+
+    abstracts_train = load_data("./" + sys.argv[1])
+    abstracts_test = load_data("./" + sys.argv[2])
+    labels_train = load_data("./" + sys.argv[3])
+    labels_test = load_data("./" + sys.argv[4])
+
+    _, sequence_len = abstracts_train.shape
+
+    build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len)
+
