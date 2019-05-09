@@ -1,4 +1,4 @@
-import pickle, sys
+import pickle, sys, lzma
 import tensorflow as tf
 import numpy as np
 import keras.backend as K
@@ -26,15 +26,9 @@ epochs = 20
 maxlen = 512
 freeze_bert = False
 
-
-def dump_data(file_name, data):
-
-    with open(file_name, "wb") as f:
-        pickle.dump(data, f)
-
 def load_data(file_name):
 
-    with open(file_name, "rb") as f:
+    with lzma.open(file_name, "rb") as f:
         return pickle.load(f)
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
@@ -43,10 +37,10 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
     custom_objects["tf"] = tf
 
     if gpus > 1:
-        base_model = load_model(sys.argv[3], custom_objects=custom_objects)
+        base_model = load_model(sys.argv[5], custom_objects=custom_objects)
         model = multi_gpu_model(base_model, gpus=gpus, cpu_merge=True, cpu_relocation=False)
     else:
-        model = load_model(sys.argv[3], custom_objects=custom_objects)
+        model = load_model(sys.argv[5], custom_objects=custom_objects)
 
     # Unfreeze bert layers.
     if not freeze_bert:
@@ -90,9 +84,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
             stale_epochs = 0
             print("Saving model..\n")
             if gpus > 1:
-                base_model.save(sys.argv[4])
+                base_model.save(sys.argv[6])
             else:
-                model.save(sys.argv[4])
+                model.save(sys.argv[6])
         else:
             stale_epochs += 1
             if stale_epochs >= 4:

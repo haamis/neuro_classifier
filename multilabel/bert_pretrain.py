@@ -1,4 +1,4 @@
-import pickle, sys
+import pickle, sys, lzma
 import tensorflow as tf
 import numpy as np
 import keras.backend as K
@@ -26,14 +26,9 @@ gpus = 1
 epochs = 20
 freeze_bert = True
 
-def dump_data(file_name, data):
-
-    with open(file_name, "wb") as f:
-        pickle.dump(data, f)
-
 def load_data(file_name):
 
-    with open(file_name, "rb") as f:
+    with lzma.open(file_name, "rb") as f:
         return pickle.load(f)
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
@@ -111,9 +106,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
                 layer.trainable = True
             
             if gpus > 1:
-                base_model.save(sys.argv[3])
+                base_model.save(sys.argv[5])
             else:
-                model.save(sys.argv[3])
+                model.save(sys.argv[5])
 
             # Freeze it back for training if necessary.
             if freeze_bert:
@@ -121,7 +116,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
                     layer.trainable = False
         else:
             stale_epochs += 1
-            if stale_epochs >= 4:
+            if stale_epochs >= 1:
                 break
 
 if __name__ == '__main__':
