@@ -23,7 +23,7 @@ set_session(tf.Session(config=config))
 # set parameters:
 batch_size = 8
 gpus = 1
-epochs = 20
+epochs = 40
 freeze_bert = True
 
 def load_data(file_name):
@@ -71,7 +71,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         learning_rate = 0.00005
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))
+                optimizer=Adam(lr=learning_rate))#, decay=0.01))
 
     best_f1 = 0.0
     stale_epochs = 0
@@ -116,17 +116,17 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
                     layer.trainable = False
         else:
             stale_epochs += 1
-            if stale_epochs >= 1:
+            if stale_epochs >= 4:
                 break
 
 if __name__ == '__main__':
 
     print("Reading input files..")
 
-    abstracts_train = load_data("./" + sys.argv[1])
-    abstracts_test = load_data("./" + sys.argv[2])
-    labels_train = load_data("./" + sys.argv[3])
-    labels_test = load_data("./" + sys.argv[4])
+    abstracts_train = load_data(sys.argv[1])
+    abstracts_test = load_data(sys.argv[2])
+    labels_train = load_data(sys.argv[3])
+    labels_test = load_data(sys.argv[4])
 
     _, sequence_len = abstracts_train.shape
 
