@@ -51,7 +51,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test):
 
     print("Number of GPUs in use:", gpus)
 
-    learning_rate = 0.00002
+    learning_rate = 2e-5
 
     model.compile(loss='binary_crossentropy',
                 optimizer=Adam(lr=learning_rate))#SGD(lr=0.2, momentum=0.9))

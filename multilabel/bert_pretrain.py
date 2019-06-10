@@ -13,6 +13,7 @@ from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert.bert import *
+from keras_bert import AdamWarmup, calc_train_steps
 
 from sklearn.metrics import precision_recall_fscore_support
 
@@ -23,7 +24,7 @@ set_session(tf.Session(config=config))
 # set parameters:
 batch_size = 8
 gpus = 1
-epochs = 40
+epochs = 15
 freeze_bert = True
 
 def load_data(file_name):
@@ -53,7 +54,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     flatten_layer = Flatten()(slice_layer)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(flatten_layer)
+    dropout_layer = Dropout(0.1)(flatten_layer)
+
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(dropout_layer)
 
     if gpus > 1:
         base_model = Model(biobert.input, output_layer)
@@ -65,13 +68,29 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     print("Number of GPUs in use:", gpus)
 
-    if freeze_bert:
-        learning_rate = 0.001
-    else:
-        learning_rate = 0.00005
+    learning_rate = 0.001
+
+    total_steps, warmup_steps = calc_train_steps(
+        num_example=abstracts_train.shape[0],
+        batch_size=batch_size,
+        epochs=epochs,
+        warmup_proportion=0.1)
 
     model.compile(loss='binary_crossentropy',
-                optimizer=Adam(lr=learning_rate))#, decay=0.01))
+                optimizer=AdamWarmup(total_steps, warmup_steps, lr=learning_rate, min_lr=1e-5))#, decay=0.01))
+    
+    ### for no pretrain
+    # Unfreezing bert before saving, for debug.
+    for layer in biobert.layers[:]:
+        layer.trainable = True
+    
+    if gpus > 1:
+        base_model.save(sys.argv[5])
+    else:
+        model.save(sys.argv[5])
+
+    sys.exit()
+    ### /for no pretrain
 
     best_f1 = 0.0
     stale_epochs = 0
