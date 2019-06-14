@@ -3,16 +3,15 @@ import tensorflow as tf
 import numpy as np
 import keras.backend as K
 import horovod.keras as hvd
+import math
 
 from scipy.sparse import lil_matrix
 
-from keras.backend.tensorflow_backend import set_session
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from keras.layers import Dense, Flatten, Lambda, Dropout
 from keras.models import Model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
-from keras_bert import get_custom_objects
 from keras_bert import AdamWarmup, calc_train_steps
 
 from sklearn.metrics import precision_recall_fscore_support
@@ -26,8 +25,8 @@ K.set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 5
-learning_rate = 4e-5
-epochs = 20
+learning_rate = 5e-5
+epochs = int(math.ceil( 30 // hvd.size() ))
 maxlen = 512
 
 class Metrics(Callback):
@@ -63,9 +62,9 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     flatten_layer = Flatten()(slice_layer)
 
-    dropout_layer = Dropout(0.1)(flatten_layer)
+    #dropout_layer = Dropout(0.1)(flatten_layer)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(dropout_layer)
+    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(flatten_layer)
 
     model = Model(biobert.input, output_layer)
 
@@ -76,7 +75,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
                                                 batch_size=batch_size, epochs=epochs,
                                                 warmup_proportion=0.1)
 
-    optimizer = AdamWarmup(total_steps, warmup_steps, lr=learning_rate, min_lr=K.epsilon)
+    optimizer = AdamWarmup(total_steps, warmup_steps, lr=learning_rate)
     optimizer = hvd.DistributedOptimizer(optimizer)
 
     model.compile(loss="binary_crossentropy", optimizer=optimizer)
@@ -91,7 +90,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
         print("Learning rate:", learning_rate)
 
     model.fit([abstracts_train, lil_matrix(abstracts_train.shape)], labels_train,
-        batch_size=batch_size, epochs=epochs // hvd.size(), callbacks=callbacks,
+        batch_size=batch_size, epochs=epochs, callbacks=callbacks,
         validation_data=[[abstracts_test, lil_matrix(abstracts_test.shape)], labels_test])
     if hvd.rank() == 0:
         model.save(sys.argv[5])
