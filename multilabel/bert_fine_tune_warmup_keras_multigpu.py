@@ -1,32 +1,28 @@
 import pickle, sys, lzma
 import tensorflow as tf
-import numpy as np
 import keras.backend as K
-import horovod.keras as hvd
-import math
 
 from scipy.sparse import lil_matrix
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from keras.layers import Dense, Flatten, Lambda, Dropout
 from keras.models import Model
+from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
 
 from sklearn.metrics import precision_recall_fscore_support
 
-hvd.init()
-
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
-config.gpu_options.visible_device_list = str(hvd.local_rank())
 K.set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 5
+gpus = 2
 learning_rate = 4e-5
-epochs = int(math.ceil( 15 // hvd.size() ))
+epochs = 15
 maxlen = 512
 
 class Metrics(Callback):
@@ -68,32 +64,28 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     model = Model(biobert.input, output_layer)
 
+    model = multi_gpu_model(model, gpus=gpus)
+
     metrics = Metrics()
-    early_stopping = EarlyStopping(patience=10, verbose=1)
+    early_stopping = EarlyStopping(patience=15, verbose=1)
 
     total_steps, warmup_steps = calc_train_steps(num_example=abstracts_train.shape[0],
                                                 batch_size=batch_size, epochs=epochs,
                                                 warmup_proportion=0.1)
 
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=learning_rate)
-    optimizer = hvd.DistributedOptimizer(optimizer)
 
     model.compile(loss="binary_crossentropy", optimizer=optimizer)
-
-    callbacks = [hvd.callbacks.BroadcastGlobalVariablesCallback(0), metrics, early_stopping]
     
-    if hvd.rank() == 0:
-        callbacks.append(ModelCheckpoint(sys.argv[5][:-3] + "-checkpoint-{epoch}.h5"))
-        print(model.summary(line_length=118))
-        print("Number of GPUs in use:", hvd.size())
-        print("Batch size:", batch_size)
-        print("Learning rate:", learning_rate)
+    print(model.summary(line_length=118))
+    print("Number of GPUs in use:", gpus)
+    print("Batch size:", batch_size)
+    print("Learning rate:", learning_rate)
 
     model.fit([abstracts_train, lil_matrix(abstracts_train.shape)], labels_train,
-        batch_size=batch_size, epochs=epochs, callbacks=callbacks,
+        batch_size=batch_size, epochs=epochs, callbacks=[metrics, ModelCheckpoint(sys.argv[5][:-3] + "-checkpoint-{epoch}.h5")],
         validation_data=[[abstracts_test, lil_matrix(abstracts_test.shape)], labels_test])
-    if hvd.rank() == 0:
-        model.save(sys.argv[5])
+    model.save(sys.argv[5])
 
 if __name__ == "__main__":
 

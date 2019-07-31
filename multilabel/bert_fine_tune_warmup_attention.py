@@ -8,7 +8,7 @@ import math
 from scipy.sparse import lil_matrix
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
-from keras.layers import Dense, Flatten, Lambda, Dropout
+from keras.layers import Dense, Flatten, Lambda, Dropout, Multiply, Permute, RepeatVector
 from keras.models import Model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
@@ -24,10 +24,9 @@ config.gpu_options.visible_device_list = str(hvd.local_rank())
 K.set_session(tf.Session(config=config))
 
 # set parameters:
-batch_size = 5
+batch_size = 1
 learning_rate = 4e-5
-epochs = int(math.ceil( 15 // hvd.size() ))
-maxlen = 512
+epochs = int(math.ceil( 20 // hvd.size() ))
 
 class Metrics(Callback):
 
@@ -58,13 +57,31 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
                                                 training=False, trainable=True,
                                                 seq_len=sequence_len)
 
-    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(biobert.layers[-1].output)
+    #slice_layer = Lambda(lambda x: tf.slice(x, [0, 0, 0], [-1, 1, -1]))(biobert.layers[-1].output)
 
-    flatten_layer = Flatten()(slice_layer)
+    #flatten_layer = Flatten()(slice_layer)
 
-    dropout_layer = Dropout(0.1)(flatten_layer)
+    #dropout_layer = Dropout(0.1)(flatten_layer)
 
-    output_layer = Dense(labels_train.shape[1], activation='sigmoid')(dropout_layer)
+    attention = Dense(1, activation="softmax", name="attention")(biobert.layers[-1].output)
+
+    # Hackish way to drop masking, flatten won't work otherwise.
+    attention = Lambda(lambda x: x, name="drop_mask_1")(attention)
+
+    attention = Flatten()(attention)
+
+    attention = RepeatVector(768)(attention)
+    
+    attention = Permute((2,1))(attention)
+
+    attention = Multiply()([attention, biobert.layers[-1].output])
+
+    # Hackish way to drop masking, flatten won't work otherwise.
+    attention = Lambda(lambda x: x, name="drop_mask_2")(attention)
+
+    attention = Flatten()(attention)
+    
+    output_layer = Dense(labels_train.shape[1], activation="sigmoid", name="decision")(attention)
 
     model = Model(biobert.input, output_layer)
 
@@ -77,6 +94,8 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=learning_rate)
     optimizer = hvd.DistributedOptimizer(optimizer)
+
+    print("Compiling model")
 
     model.compile(loss="binary_crossentropy", optimizer=optimizer)
 
@@ -100,7 +119,11 @@ if __name__ == "__main__":
     print("Reading input files..")
 
     abstracts_train = load_data(sys.argv[1])
+    print(abstracts_train.shape)
+    abstracts_train = abstracts_train[:,0:16]
+    print(abstracts_train.shape)
     abstracts_test = load_data(sys.argv[2])
+    abstracts_test = abstracts_test[:,0:16]
     labels_train = load_data(sys.argv[3])
     labels_test = load_data(sys.argv[4])
 

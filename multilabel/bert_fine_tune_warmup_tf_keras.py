@@ -1,15 +1,15 @@
 import pickle, sys, lzma
 import tensorflow as tf
 import numpy as np
-import keras.backend as K
-import horovod.keras as hvd
+import tensorflow.keras.backend as K
+import horovod.tensorflow.keras as hvd
 import math
 
 from scipy.sparse import lil_matrix
 
-from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
-from keras.layers import Dense, Flatten, Lambda, Dropout
-from keras.models import Model
+from tensorflow.keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
+from tensorflow.keras.layers import Dense, Flatten, Lambda, Dropout
+from tensorflow.keras.models import Model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
@@ -19,14 +19,14 @@ from sklearn.metrics import precision_recall_fscore_support
 hvd.init()
 
 config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
+config.gpu_options.allow_growth = False
 config.gpu_options.visible_device_list = str(hvd.local_rank())
 K.set_session(tf.Session(config=config))
 
 # set parameters:
 batch_size = 5
 learning_rate = 4e-5
-epochs = int(math.ceil( 15 // hvd.size() ))
+epochs = int(math.ceil( 10 // hvd.size() ))
 maxlen = 512
 
 class Metrics(Callback):
@@ -58,7 +58,7 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
                                                 training=False, trainable=True,
                                                 seq_len=sequence_len)
 
-    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(biobert.layers[-1].output)
+    slice_layer = Lambda(lambda x: tf.slice(x, [0, 0, 0], [-1, 4, -1]))(biobert.layers[-1].output)
 
     flatten_layer = Flatten()(slice_layer)
 

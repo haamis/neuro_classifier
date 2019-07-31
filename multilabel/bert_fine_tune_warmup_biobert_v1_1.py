@@ -26,7 +26,7 @@ K.set_session(tf.Session(config=config))
 # set parameters:
 batch_size = 5
 learning_rate = 4e-5
-epochs = int(math.ceil( 15 // hvd.size() ))
+epochs = int(math.ceil( 10 // hvd.size() ))
 maxlen = 512
 
 class Metrics(Callback):
@@ -51,14 +51,14 @@ def load_data(file_name):
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
 
-    checkpoint_file = "../../biobert_pubmed/biobert_model.ckpt"
-    config_file = "../../biobert_pubmed/bert_config.json"
+    checkpoint_file = "../../biobert_v1.1_pubmed/model.ckpt-1000000"
+    config_file = "../../biobert_v1.1_pubmed/bert_config.json"
 
     biobert = load_trained_model_from_checkpoint(config_file, checkpoint_file,
                                                 training=False, trainable=True,
                                                 seq_len=sequence_len)
 
-    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(biobert.layers[-1].output)
+    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 4, -1]))(biobert.layers[-1].output)
 
     flatten_layer = Flatten()(slice_layer)
 
