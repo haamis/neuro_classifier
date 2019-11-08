@@ -2,6 +2,8 @@ import pickle, sys, lzma
 import tensorflow as tf
 import keras.backend as K
 
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+
 from scipy.sparse import lil_matrix
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
@@ -14,17 +16,27 @@ from keras_bert import AdamWarmup, calc_train_steps
 
 from sklearn.metrics import precision_recall_fscore_support
 
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
-config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
-K.set_session(tf.Session(config=config))
-
 # set parameters:
 batch_size = 5
 gpus = 1
 learning_rate = 4e-5
 epochs = 15
 maxlen = 512
+
+def argparser():
+    arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    arg_parse.add_argument("--input_file", help="TSV input file.", metavar="FILE", required=True)
+    arg_parse.add_argument("--init_checkpoint", help="BERT tensorflow model with path ending in .ckpt", metavar="PATH", required=True)
+    arg_parse.add_argument("--output_model", help="Path to which save the finetuned model.", metavar="PATH", required=True)
+    arg_parse.add_argument("--vocab", help="Vocabulary to use.", metavar="FILE", required=True)
+    arg_parse.add_argument("--batch_size", help="Batch size to use for finetuning.", metavar="INT", type=int, required=True)
+    arg_parse.add_argument("--lr", "--learning_rate", help="Peak learning rate.", metavar="FLOAT", type=float, required=True)
+    arg_parse.add_argument("--epochs", help="Max amount of epochs to run.", metavar="INT", type=int, required=True)
+    arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length", metavar="INT", default=512, type=int)
+    arg_parse.add_argument("--gpus", help="Number of GPUs to use,", metavar="INT", default=1, type=int)
+    arg_parse.add_argument("--patience", help="Patience of early stopping. Early stopping disabled if 0.", metavar="INT", default=0, type=int)
+    arg_parse.add_argument("--threshold", help="Positive label prediction threshold.", metavar="FLOAT", default=0.5, type=float)
+    return arg_parse
 
 class Metrics(Callback):
 
@@ -47,6 +59,11 @@ def load_data(file_name):
         return pickle.load(f)
 
 def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequence_len):
+
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    #config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
+    K.set_session(tf.Session(config=config))
 
     checkpoint_file = "../../biobert_pubmed/biobert_model.ckpt"
     config_file = "../../biobert_pubmed/bert_config.json"
@@ -92,12 +109,14 @@ def build_model(abstracts_train, abstracts_test, labels_train, labels_test, sequ
 
 if __name__ == "__main__":
 
+    args = argparser().parse_args()
+
     print("Reading input files..")
 
-    abstracts_train = load_data(sys.argv[1])[0:1000]
-    abstracts_test = load_data(sys.argv[2])[0:100]
-    labels_train = load_data(sys.argv[3])[0:1000]
-    labels_test = load_data(sys.argv[4])[0:100]
+    # abstracts_train = load_data(sys.argv[1])[0:1000]
+    # abstracts_test = load_data(sys.argv[2])[0:100]
+    # labels_train = load_data(sys.argv[3])[0:1000]
+    # labels_test = load_data(sys.argv[4])[0:100]
 
     _, sequence_len = abstracts_train.shape
 
