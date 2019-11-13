@@ -1,3 +1,6 @@
 [submodule "binary/bert"]
 	path = binary/bert
 	url = https://github.com/google-research/bert.git
+[submodule "multilabel/bert"]
+	path = multilabel/bert
+	url = https://github.com/google-research/bert
