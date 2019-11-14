@@ -27,19 +27,19 @@ def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     arg_parse.add_argument("--train", help="Processed train file.", metavar="FILE", required=True)
     arg_parse.add_argument("--dev", help="Processed dev file.", metavar="FILE", required=True)
-    #arg_parse.add_argument("--test", help="Processed test file.", metavar="FILE", required=True)
     arg_parse.add_argument("--init_checkpoint", help="BERT tensorflow model with path ending in .ckpt", metavar="PATH", required=True)
     arg_parse.add_argument("--bert_config", help="BERT config file.", metavar="FILE", required=True)
-    arg_parse.add_argument("--vocab", help="Vocabulary to use.", metavar="FILE", required=True)
     arg_parse.add_argument("--batch_size", help="Batch size to use for finetuning.", metavar="INT", type=int, required=True)
     arg_parse.add_argument("--lr", "--learning_rate", help="Peak learning rate.", metavar="FLOAT", type=float, required=True)
     arg_parse.add_argument("--epochs", help="Max amount of epochs to run.", metavar="INT", type=int, required=True)
-    arg_parse.add_argument("--output_file", help="Path to which save the finetuned model. Checkpoints will have the format `checkpoint-<epoch>-<output_file>`.", metavar="PATH", default="model.h5")
+    arg_parse.add_argument("--output_file", help="Path to which save the finetuned model. Checkpoints will have the format `<output_file>.checkpoint-<epoch>`.", metavar="PATH", default="model.h5")
     arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length.", metavar="INT", default=512, type=int)
     arg_parse.add_argument("--do_lower_case", help="Lowercase input text.", metavar="BOOL", default=False, type=bool)
     arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
     arg_parse.add_argument("--patience", help="Patience of early stopping. Early stopping disabled if -1.", metavar="INT", default=-1, type=int)
-    arg_parse.add_argument("--threshold", help="Positive label prediction threshold.", metavar="FLOAT", default=0.5, type=float)
+    arg_parse.add_argument("--threshold_start", help="Positive label prediction threshold range start.", metavar="FLOAT", default=0.1, type=float)
+    arg_parse.add_argument("--threshold_end", help="Positive label prediction threshold range end, exclusive.", metavar="FLOAT", default=1.0, type=float)
+    arg_parse.add_argument("--threshold_step", help="Positive label prediction threshold range step.", metavar="FLOAT", default=0.1, type=float)
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
     return arg_parse.parse_args()
 
@@ -69,10 +69,9 @@ def data_generator(file_path, batch_size):
                     yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
                     text = []
                     labels = []
-                text.append(np.asarray(json.loads(line[0])))
+                text.append(np.asarray(json.loads(line[0]))[0:args.seq_len])
                 labels.append(np.asarray(json.loads(line[1])))
             # Yield what is left as the last batch when file has been read to its end.
-            print("File done.")
             yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
 
 class Metrics(Callback):
@@ -93,12 +92,14 @@ class Metrics(Callback):
         labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size), use_multiprocessing=True,
                                                     steps=ceil( get_example_count(args.dev) / args.eval_batch_size))
         print("Probabilities to labels..")
-        labels_pred = lil_matrix(labels_prob.shape, dtype='b')
-        labels_pred[labels_prob>args.threshold] = 1
-        precision, recall, f1, _ = precision_recall_fscore_support(self.labels_dev, labels_pred, average="micro")
-        print("Precision:", precision)
-        print("Recall:", recall)
-        print("F1-score:", f1, "\n")
+        for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
+            labels_pred = lil_matrix(labels_prob.shape, dtype='b')
+            print("Threshold:", threshold)
+            labels_pred[labels_prob>threshold] = 1
+            precision, recall, f1, _ = precision_recall_fscore_support(self.labels_dev, labels_pred, average="micro")
+            print("Precision:", precision)
+            print("Recall:", recall)
+            print("F1-score:", f1, "\n")
 
 
 def build_model(args):
@@ -132,7 +133,7 @@ def build_model(args):
     if args.patience > -1:
         callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
 
-    callbacks.append(ModelCheckpoint("checkpoint-{epoch}-" + args.output_file))
+    callbacks.append(ModelCheckpoint(args.output_file + ".checkpoint-{epoch}"))
 
     total_steps, warmup_steps =  calc_train_steps(num_example=get_example_count(args.train),
                                                 batch_size=args.batch_size, epochs=args.epochs,
@@ -140,7 +141,7 @@ def build_model(args):
 
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
 
-    model.compile(loss="binary_crossentropy", optimizer=optimizer)
+    model.compile(loss="binary_crossentropy", optimizer=optimizer, metrics=["accuracy"])
     
     print(model.summary(line_length=118))
     print("Number of GPUs in use:", args.gpus)
