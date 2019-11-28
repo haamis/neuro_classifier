@@ -2,21 +2,15 @@ import csv, gzip, json, os, pickle, sys
 import numpy as np
 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
 from itertools import chain
-
 from functools import partial
-
-from scipy.sparse import csr_matrix
-
 from collections import Counter
-
 from multiprocessing import Pool, cpu_count
 
-from tqdm import tqdm
-
+from scipy.sparse import csr_matrix
 from sklearn.preprocessing import MultiLabelBinarizer
-
+from tqdm import tqdm
+from xopen import xopen
 from bert import tokenization
 
 
@@ -99,7 +93,7 @@ def preprocess_data(args):
             else:
                 open_fn = open
 
-            with open_fn(input_file, 'rt') as f:
+            with xopen(input_file, 'rt') as f:
 
                 examples, labels = input_readers[args.task](f)
 
@@ -155,7 +149,7 @@ def preprocess_data(args):
             file_name = file_basename + "-top-" + str(args.top_n_labels) + "-processed.gz"
         else:
             file_name = file_basename + "-processed.gz"
-        with gzip.open(file_name, "wt") as f:
+        with xopen(file_name, "wt") as f:
             print("Writing ", file_name)
             cw = csv.writer(f, delimiter="\t")
             # Write number of examples as the first row, useful for the finetuning.

@@ -1,19 +1,18 @@
-import pickle, sys, csv, gzip, json
-import os
+import pickle, sys, csv, gzip, json, os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import tensorflow as tf
 tf.logging.set_verbosity(tf.logging.ERROR)
-import keras.backend as K
 
 import keras
-
+import keras.backend as K
 import numpy as np
 
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from math import ceil
 
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
 from scipy.sparse import lil_matrix
+from sklearn.metrics import precision_recall_fscore_support
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape
@@ -23,7 +22,6 @@ from keras.utils import multi_gpu_model
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
 
-from sklearn.metrics import precision_recall_fscore_support
 
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
