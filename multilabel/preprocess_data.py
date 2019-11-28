@@ -7,6 +7,8 @@ from itertools import chain
 
 from functools import partial
 
+from scipy.sparse import csr_matrix
+
 from collections import Counter
 
 from multiprocessing import Pool, cpu_count
@@ -20,7 +22,7 @@ from bert import tokenization
 
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-    arg_parse.add_argument("-i", "--input_files", help="TSV input files: train, dev and test.", nargs=3, metavar="FILES", required=True)
+    arg_parse.add_argument("-i", "--input_files", help="TSV input files: train, dev and test.", nargs='+', metavar="FILES", required=True)
     arg_parse.add_argument("-t", "--task", help="Task name.", choices=["bioasq", "cafa", "eng", "mesh_xml"], required=True)
     arg_parse.add_argument("-v", "--vocab", help="BERT vocab.", metavar="FILE", required=True)
     arg_parse.add_argument("-l", "--labels_out", help="List of labels in order.", metavar="FILE", default="labels.json")
@@ -38,7 +40,7 @@ def bioasq_reader(file):
     csv_reader = csv.reader(file, delimiter=",")
     for line in tqdm(csv_reader, desc="Reading file"):
         examples.append(line[1])
-        labels.append(json.dumps(line[0]))
+        labels.append(json.loads(line[0]))
     return examples, labels
 
 def cafa_reader(file):
@@ -82,14 +84,15 @@ def tokenize(text, tokenizer, maxlen=512):
     return ["[CLS]"] + tokenizer.tokenize(text)[0:maxlen-2] + ["[SEP]"]
 
 def vectorize(text, vocab, maxlen=512):
-    return [vocab[token] for token in text] + [0] * (maxlen - len(text))
+    return csr_matrix([vocab[token] for token in text] + [0] * (maxlen - len(text)), dtype="int32")
 
 def preprocess_data(args):
 
+    examples_list = []
+    labels_list = []
+
     # Create child processes before we load a bunch of data.
     with Pool(args.processes) as p:
-        examples_list = []
-        labels_list = []
         for input_file in args.input_files:
             if input_file[-3:] == ".gz":
                 open_fn = gzip.open 
@@ -107,7 +110,7 @@ def preprocess_data(args):
                 print("Vectorizing..")
                 examples = p.map(partial(vectorize, vocab=tokenizer.vocab), examples)
 
-                #print("Token vectors shape:", examples.shape)
+                print("Token vectors[0] shape:", examples[0].shape)
                 examples_list.append(examples)
                 labels_list.append(labels)
 
@@ -115,7 +118,7 @@ def preprocess_data(args):
 
     if args.top_n_labels > 0:
         print("Processing all labels first for mapping..")
-        mlb_full = MultiLabelBinarizer(sparse_output=False)
+        mlb_full = MultiLabelBinarizer(sparse_output=True)
         mlb_full = mlb_full.fit(chain.from_iterable(labels_list))
         print("Filtering to top", args.top_n_labels, "labels..")
         counter = Counter(chain(*chain.from_iterable(labels_list)))
@@ -123,10 +126,10 @@ def preprocess_data(args):
         labels_list = [[[label for label in example_labels if label in top_n_keys] for example_labels in part_labels] for part_labels in labels_list]
 
     print("Binarizing labels..")
-    mlb = MultiLabelBinarizer(sparse_output=False)
+    mlb = MultiLabelBinarizer(sparse_output=True)
     mlb = mlb.fit(chain.from_iterable(labels_list))
-    labels_list = [mlb.transform(labels).tolist() for labels in labels_list]
-    #print("Labels shape:", labels_list[0].shape)
+    labels_list = [mlb.transform(labels) for labels in labels_list]
+    print("Labels shape:", labels_list[0].shape)
 
     # Save list of partial -> full mapping if doing top N labels.
     if args.top_n_labels > 0:
@@ -158,7 +161,8 @@ def preprocess_data(args):
             # Write number of examples as the first row, useful for the finetuning.
             cw.writerow([len(examples_list[i])])
             for example, label in zip(examples_list[i], labels_list[i]):
-                cw.writerow( (json.dumps(example), json.dumps(label)) )
+                # Convert sparse arrays to python lists for json dumping.
+                cw.writerow( (json.dumps(example.todense().tolist()), json.dumps(label.todense().tolist())) )
 
 if __name__ == '__main__':
     args = argparser()

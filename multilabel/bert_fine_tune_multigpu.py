@@ -198,6 +198,7 @@ def build_model(args):
     print("Number of GPUs in use:", args.gpus)
     print("Batch size:", args.batch_size)
     print("Learning rate:", args.lr)
+    print("Dropout:", args.dropout)
 
 
     model.fit_generator(data_generator(args.train, args.batch_size),
