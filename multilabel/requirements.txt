@@ -1,5 +1,6 @@
 tensorflow<=1.15
-keras
+keras<2.3
 sklearn
 tqdm
 xopen
+keras_bert

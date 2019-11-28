@@ -11,6 +11,8 @@ import numpy as np
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from math import ceil
 
+from xopen import xopen
+
 from scipy.sparse import lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
 
@@ -49,20 +51,20 @@ def argparser():
 
 # Read example count from the first row a preprocessed file.
 def get_example_count(file_path):
-    with gzip.open(file_path, "rt") as f:
+    with xopen(file_path, "rt") as f:
         cr = csv.reader(f, delimiter="\t")
         return int(next(cr)[0])
 
 # Read the first example from a file and return the length of the label list.
 def get_label_dim(file_path):
-    with gzip.open(file_path, "rt") as f:
+    with xopen(file_path, "rt") as f:
         cr = csv.reader(f, delimiter="\t")
         next(cr) # Skip example number row.
         return len(json.loads(next(cr)[1]))
 
 def data_generator(file_path, batch_size):
     while True:
-        with gzip.open(file_path, "rt") as f:
+        with xopen(file_path, "rt") as f:
             cr = csv.reader(f, delimiter="\t")
             next(cr) # Skip example number row.
             text = []
@@ -95,7 +97,7 @@ class Metrics(Callback):
             self.all_labels = lil_matrix(self.all_labels)
             print("Dev labels shape:", self.all_labels.shape)
         if args.dev_all is not None:
-            with open(args.label_mapping) as f:
+            with xopen(args.label_mapping) as f:
                 self.labels_mapping = json.loads(f.read())
         
     def on_epoch_end(self, epoch, logs=None):
