@@ -1,6 +1,5 @@
 # Ignore trained models.
 *.h5
 # Ignore any data files left in the directories.
-*.txt
 *.json
 *.gz
