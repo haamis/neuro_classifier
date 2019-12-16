@@ -3,3 +3,4 @@
 # Ignore any data files left in the directories.
 *.json
 *.gz
+__pycache__
