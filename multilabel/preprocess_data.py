@@ -12,7 +12,7 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from tqdm import tqdm
 from xopen import xopen
 from bert import tokenization
-
+import longestfirst
 
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
@@ -22,10 +22,11 @@ def argparser():
     arg_parse.add_argument("-l", "--labels_out", help="List of labels in order.", metavar="FILE", default="labels.json")
     arg_parse.add_argument("-f", "--full_labels", help="List of all labels in order. Use only with top_n_labels.", metavar="FILE", default="full_labels.json")
     arg_parse.add_argument("-m", "--label_mapping", help="Mapping of labels partial -> full if using top_n_labels", metavar="FILE", default="label_mapping.json")
-    arg_parse.add_argument("-d", "--do_lower_case", help="Lowercase input text.", metavar="bool", default=False)
+    arg_parse.add_argument("-d", "--do_lower_case", help="Lowercase input text.", metavar="BOOL", type=bool, default=False)
     arg_parse.add_argument("-s", "--seq_len", help="BERT's max sequence length.", metavar="INT", type=int, default=512)
     arg_parse.add_argument("-n", "--top_n_labels", help="Only use top N labels. 0 for disabled", metavar="INT", type=int, default=0)
     arg_parse.add_argument("-p", "--processes", help="Number of parallel processes, uses all cores by default.", metavar="INT", type=int, default=cpu_count())
+    arg_parse.add_argument("--longest_first_tokenization", help="Use longest-first tokenization.", metavar="BOOL", type=bool, default=False)
     return arg_parse.parse_args()
 
 def bioasq_reader(file):
@@ -73,12 +74,12 @@ input_readers = {
 }
 
 def tokenize(text, tokenizer, maxlen=512):
-    text = text.split(" ")[:maxlen]
+    text = text.split(" ")[:maxlen-2]
     text = " ".join(text)
-    return ["[CLS]"] + tokenizer.tokenize(text)[0:maxlen-2] + ["[SEP]"]
+    return ["[CLS]"] + tokenizer.tokenize(text)[:maxlen-2] + ["[SEP]"]
 
 def vectorize(text, vocab, maxlen=512):
-    return csr_matrix([vocab[token] for token in text] + [0] * (maxlen - len(text)), dtype="int32")
+    return csr_matrix([vocab[token] for token in text] + [0] * (maxlen - len(text)), dtype="uint16")
 
 def preprocess_data(args):
 
@@ -88,23 +89,28 @@ def preprocess_data(args):
     # Create child processes before we load a bunch of data.
     with Pool(args.processes) as p:
         for input_file in args.input_files:
-            if input_file[-3:] == ".gz":
-                open_fn = gzip.open 
-            else:
-                open_fn = open
 
             with xopen(input_file, 'rt') as f:
 
                 examples, labels = input_readers[args.task](f)
 
-                tokenizer = tokenization.FullTokenizer(args.vocab, do_lower_case=args.do_lower_case)
+                if args.longest_first_tokenization:
+                    tokenizer = longestfirst.Tokenizer.load(args.vocab)
+                else:
+                    tokenizer = tokenization.FullTokenizer(args.vocab, do_lower_case=args.do_lower_case)
 
                 print("Tokenizing..")
-                examples = p.map(partial(tokenize, tokenizer=tokenizer), examples)
-                print("Vectorizing..")
-                examples = p.map(partial(vectorize, vocab=tokenizer.vocab), examples)
+                examples = p.map(partial(tokenize, tokenizer=tokenizer, maxlen=args.seq_len), examples)
 
-                print("Token vectors[0] shape:", examples[0].shape)
+                print("Vectorizing..")
+                if args.longest_first_tokenization:
+                    # Make sure we get the vocab in the same way for the tokenization
+                    vocab = tokenization.FullTokenizer(args.vocab).vocab
+                else:
+                    vocab = tokenizer.vocab
+                examples = p.map(partial(vectorize, vocab=vocab, maxlen=args.seq_len), examples)
+
+                #print("Token vectors[0] shape:", examples[0].shape)
                 examples_list.append(examples)
                 labels_list.append(labels)
 
@@ -156,7 +162,7 @@ def preprocess_data(args):
             cw.writerow([len(examples_list[i])])
             for example, label in zip(examples_list[i], labels_list[i]):
                 # Convert sparse arrays to python lists for json dumping.
-                cw.writerow( (json.dumps(example.todense().tolist()), json.dumps(label.todense().tolist())) )
+                cw.writerow( ( json.dumps(example.todense().tolist()[0]), json.dumps(label.todense().tolist()[0]) ) )
 
 if __name__ == '__main__':
     args = argparser()
