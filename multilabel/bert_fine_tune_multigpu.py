@@ -1,4 +1,4 @@
-import pickle, sys, csv, gzip, json, os
+import csv, json, os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
@@ -23,6 +23,8 @@ from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
+from keras_multi_head import MultiHeadAttention, MultiHead
+from keras_self_attention import SeqSelfAttention
 
 
 def argparser():
@@ -38,7 +40,6 @@ def argparser():
     arg_parse.add_argument("--label_mapping", help="Mapping from N labels to all labels. Use if only training on top N labels.", metavar="FILE", default=None)
     arg_parse.add_argument("--output_file", help="Path to which save the finetuned model. Checkpoints will have the format `<output_file>.checkpoint-<epoch>`.", metavar="PATH", default="model.h5")
     arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length.", metavar="INT", default=512, type=int)
-    arg_parse.add_argument("--do_lower_case", help="Lowercase input text.", metavar="BOOL", default=False, type=bool)
     arg_parse.add_argument("--dropout", help="Dropout rate between BERT and the decision layer.", metavar="FLOAT", default=0.1, type=float)
     arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
     arg_parse.add_argument("--patience", help="Patience of early stopping. Early stopping disabled if -1.", metavar="INT", default=-1, type=int)
@@ -62,7 +63,7 @@ def get_label_dim(file_path):
         next(cr) # Skip example number row.
         return len(json.loads(next(cr)[1]))
 
-def data_generator(file_path, batch_size):
+def data_generator(file_path, batch_size, seq_len=512):
     while True:
         with xopen(file_path, "rt") as f:
             cr = csv.reader(f, delimiter="\t")
@@ -75,7 +76,7 @@ def data_generator(file_path, batch_size):
                     yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
                     text = []
                     labels = []
-                text.append(np.asarray(json.loads(line[0]))[0:args.seq_len])
+                text.append(np.asarray(json.loads(line[0]))[0:seq_len])
                 labels.append(np.asarray(json.loads(line[1])))
             # Yield what is left as the last batch when file has been read to its end.
             yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
@@ -83,13 +84,18 @@ def data_generator(file_path, batch_size):
 class Metrics(Callback):
 
     def __init__(self):
+
+        self.best_f1 = 0
+        self.best_f1_epoch = 0
+        self.best_f1_threshold = 0
+
         print("Metrics init, reading dev labels..")
         self.all_labels = []
         if args.label_mapping is not None:
             file_name = args.dev_all
         else:
             file_name = args.dev
-        with gzip.open(file_name, "rt") as f:
+        with xopen(file_name, "rt") as f:
             cr = csv.reader(f, delimiter="\t")
             next(cr) # Skip example number row.
             for line in cr:
@@ -99,10 +105,10 @@ class Metrics(Callback):
         if args.dev_all is not None:
             with xopen(args.label_mapping) as f:
                 self.labels_mapping = json.loads(f.read())
-        
+
     def on_epoch_end(self, epoch, logs=None):
         print("Predicting probabilities..")
-        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size), use_multiprocessing=True,
+        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.dev) / args.eval_batch_size))
         print("Probabilities to labels..")
         if args.label_mapping is not None:
@@ -117,9 +123,14 @@ class Metrics(Callback):
             labels_pred = lil_matrix(labels_prob.shape, dtype='b')
             labels_pred[labels_prob>threshold] = 1
             precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
+            if f1 > self.best_f1:
+                self.best_f1 = f1
+                self.best_f1_epoch = epoch
+                self.best_f1_threshold = threshold
             print("Precision:", precision)
             print("Recall:", recall)
             print("F1-score:", f1, "\n")
+        print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
 
 
 def loss_fn(y_true, y_pred):
@@ -137,7 +148,7 @@ def build_model(args):
                                                 training=False, trainable=True,
                                                 seq_len=args.seq_len)
 
-    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
+    # slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
 
     # slices = []
     # for i in range(1, 13):
@@ -152,12 +163,12 @@ def build_model(args):
     # print(slices_shaped.shape)
 
     # Simple layer to drop masking as it does not pass it along with layer.compute_mask().
-    # drop_mask = Lambda(lambda x: x)(slice_layer)
+    # drop_mask = Lambda(lambda x: x)(bert.get_layer("Encoder-12-FeedForward-Norm").output)
 
-    # conv1 = Conv1D(768, 25, padding='valid', activation='relu', strides=1)(drop_mask)
-    # conv2 = Conv1D(768, 10, padding='valid', activation='relu', strides=1)(drop_mask)
-    # conv3 = Conv1D(768, 3, padding='valid', activation='relu', strides=1)(drop_mask)
-    # conv4 = Conv1D(768, 1, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv1 = Conv1D(250, 25, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv2 = Conv1D(250, 10, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv3 = Conv1D(250, 3, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv4 = Conv1D(250, 1, padding='valid', activation='relu', strides=1)(drop_mask)
 
     # max_pool1 = GlobalMaxPooling1D()(conv1)
     # max_pool2 = GlobalMaxPooling1D()(conv2)
@@ -166,9 +177,25 @@ def build_model(args):
 
     # concat = Concatenate()([max_pool1, max_pool2, max_pool3, max_pool4])
 
-    flatten_layer = Flatten()(slice_layer)
+    # drop_mask = Lambda(lambda x: x)(bert.layers[-1].output)
 
-    dropout_layer = Dropout(args.dropout)(flatten_layer)
+    # avg_pool = GlobalAveragePooling1D()(drop_mask)
+
+    # flatten_layer = Flatten()(slice_layer)
+
+    # dense = Dense(768, activation="tanh")(flatten_layer)
+
+    drop_mask = Lambda(lambda x: x)(bert.layers[-1].output)
+
+    #attention_layer = SeqSelfAttention(attention_width=27, attention_activation='sigmoid')(drop_mask)
+
+    attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
+
+    #attention_layer2 = MultiHeadAttention(head_num=12)(attention_layer)
+
+    avg_pool = GlobalAveragePooling1D()(attention_layer)
+
+    dropout_layer = Dropout(args.dropout)(avg_pool)
 
     output_layer = Dense(get_label_dim(args.train), activation='sigmoid')(dropout_layer)
 
@@ -201,10 +228,10 @@ def build_model(args):
     print("Dropout:", args.dropout)
 
 
-    model.fit_generator(data_generator(args.train, args.batch_size),
+    model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
                         steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
                         use_multiprocessing=True, epochs=args.epochs, callbacks=callbacks,
-                        validation_data=data_generator(args.dev, args.eval_batch_size),
+                        validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 
     if args.gpus > 1:
