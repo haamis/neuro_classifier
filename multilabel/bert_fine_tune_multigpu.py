@@ -25,6 +25,7 @@ from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
 from keras_multi_head import MultiHeadAttention, MultiHead
 from keras_self_attention import SeqSelfAttention
+from keras_position_wise_feed_forward import FeedForward
 
 
 def argparser():
@@ -148,7 +149,7 @@ def build_model(args):
                                                 training=False, trainable=True,
                                                 seq_len=args.seq_len)
 
-    # slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
+    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
 
     # slices = []
     # for i in range(1, 13):
@@ -181,23 +182,25 @@ def build_model(args):
 
     # avg_pool = GlobalAveragePooling1D()(drop_mask)
 
-    # flatten_layer = Flatten()(slice_layer)
+    flatten_layer = Flatten()(slice_layer)
 
     # dense = Dense(768, activation="tanh")(flatten_layer)
 
-    drop_mask = Lambda(lambda x: x)(bert.layers[-1].output)
+    #drop_mask = Lambda(lambda x: x)(bert.layers[-1].output)
 
     #attention_layer = SeqSelfAttention(attention_width=27, attention_activation='sigmoid')(drop_mask)
 
-    attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
+    #attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
+
+    #feed_forward_layer = FeedForward(units=3072)(attention_layer)
 
     #attention_layer2 = MultiHeadAttention(head_num=12)(attention_layer)
 
-    avg_pool = GlobalAveragePooling1D()(attention_layer)
+    #avg_pool = GlobalAveragePooling1D()(feed_forward_layer)
 
-    dropout_layer = Dropout(args.dropout)(avg_pool)
+    #dropout_layer = Dropout(args.dropout)(drop_mask)
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid')(dropout_layer)
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid')(flatten_layer)
 
     model = Model(bert.input, output_layer)
 
