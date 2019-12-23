@@ -1,0 +1,6 @@
+tensorflow>=2.0.0
+keras
+sklearn
+tqdm
+xopen
+keras_bert
