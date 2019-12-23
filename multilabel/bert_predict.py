@@ -54,6 +54,7 @@ def argparser():
     arg_parse.add_argument("--output_file", help="File to which save the prediction results, .gz file extension recommended for compression!", metavar="FILE", default="predict_output.txt")
     arg_parse.add_argument("--output_labels_threshold", help="Positive label prediction threshold for output file.", metavar="FLOAT", default=0.1, type=float)
     arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length.", metavar="INT", default=512, type=int)
+    arg_parse.add_argument("--clip_value", help="Set scores lower than this to 0.", metavar="FLOAT", default=1e-4, type=float)
     arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
     return arg_parse.parse_args()
@@ -78,15 +79,17 @@ def main(args):
 
     labels_true = []
     with xopen(args.test, "rt") as f:
-            cr = csv.reader(f, delimiter="\t")
-            next(cr) # Skip example number row.
-            for line in cr:
-                labels_true.append(json.loads(line[1]))
-            labels_true = lil_matrix(labels_true)
+        cr = csv.reader(f, delimiter="\t")
+        next(cr) # Skip example number row.
+        for line in cr:
+            labels_true.append(json.loads(line[1]))
+        labels_true = lil_matrix(labels_true)
 
     print("Predicting..")
     labels_prob = model.predict_generator(data_generator(args.test, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.test) / args.eval_batch_size))
+    # This makes json.dumps go faster and increases compression.
+    labels_prob[labels_prob<args.clip_value] = 0
     print(labels_prob.shape)
     for threshold in np.arange(args.f1_threshold_start, args.f1_threshold_end, args.f1_threshold_step):
         print("Threshold:", threshold)

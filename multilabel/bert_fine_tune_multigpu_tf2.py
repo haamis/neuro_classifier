@@ -192,16 +192,16 @@ def build_model(args):
 
     #attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
 
-    transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+    # transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
+    #                                         head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
         
-    transformer_output2 = get_encoder_component(name="Encoder-14", input_layer=transformer_output,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+    # transformer_output2 = get_encoder_component(name="Encoder-14", input_layer=transformer_output,
+    #                                         head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+    # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
+    #                                         head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    drop_mask = Lambda(lambda x: x)(transformer_output2)
+    drop_mask = Lambda(lambda x: x)(bert.layers[-1].output)
 
     slice_layer = Lambda(lambda x: tf.slice(x, [0, 0, 0], [-1, 1, -1]))(drop_mask)
 
