@@ -13,12 +13,15 @@ from math import ceil
 
 from xopen import xopen
 
+from tqdm import tqdm
+
 from scipy.sparse import lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
-from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape
+from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape, Permute
 from keras.models import Model
+from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
@@ -28,6 +31,8 @@ from keras_multi_head import MultiHeadAttention, MultiHead
 from keras_self_attention import SeqSelfAttention
 from keras_position_wise_feed_forward import FeedForward
 from keras_transformer import get_encoder_component
+
+from keras_contrib.callbacks import CyclicLR
 
 
 def argparser():
@@ -92,7 +97,7 @@ class Metrics(Callback):
         self.best_f1_epoch = 0
         self.best_f1_threshold = 0
 
-        print("Metrics init, reading dev labels..")
+        #print("Metrics init, reading dev labels..")
         self.all_labels = []
         if args.label_mapping is not None:
             file_name = args.dev_all
@@ -101,9 +106,9 @@ class Metrics(Callback):
         with xopen(file_name, "rt") as f:
             cr = csv.reader(f, delimiter="\t")
             next(cr) # Skip example number row.
-            for line in cr:
+            for line in tqdm(cr, desc="Reading dev labels"):
                 self.all_labels.append(json.loads(line[1]))
-            self.all_labels = lil_matrix(self.all_labels)
+            self.all_labels = lil_matrix(self.all_labels, dtype='b')
             print("Dev labels shape:", self.all_labels.shape)
         if args.dev_all is not None:
             with xopen(args.label_mapping) as f:
@@ -112,7 +117,7 @@ class Metrics(Callback):
     def on_epoch_end(self, epoch, logs=None):
         print("Predicting probabilities..")
         labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
-                                                    steps=ceil(get_example_count(args.dev) / args.eval_batch_size))
+                                                    steps=ceil(get_example_count(args.dev) / args.eval_batch_size), verbose=1)
         print("Probabilities to labels..")
         if args.label_mapping is not None:
             full_labels_prob = np.zeros(self.all_labels.shape)
@@ -120,7 +125,7 @@ class Metrics(Callback):
                np.put(full_labels_prob[i], self.labels_mapping, probs)
 
             labels_prob = full_labels_prob
-
+        
         for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
             print("Threshold:", threshold)
             labels_pred = lil_matrix(labels_prob.shape, dtype='b')
@@ -133,6 +138,7 @@ class Metrics(Callback):
             print("Precision:", precision)
             print("Recall:", recall)
             print("F1-score:", f1, "\n")
+
         print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
 
 
@@ -180,32 +186,52 @@ def build_model(args):
 
     # concat = Concatenate()([max_pool1, max_pool2, max_pool3, max_pool4])
 
-    #flatten_layer = Flatten()(avg_pool)
-
-    # avg_pool = GlobalAveragePooling1D()(drop_mask)
-
     #attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
 
     transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
-        
-    transformer_output2 = get_encoder_component(name="Encoder-14", input_layer=transformer_output,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
+                                            dropout_rate=0.1)
 
-    transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+    # transformer_output2 = get_encoder_component(name="Encoder-14", input_layer=transformer_output,
+    #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
+    #                                        dropout_rate=0.1)
 
-    drop_mask = Lambda(lambda x: x)(transformer_output2)
+    # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
+    #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(drop_mask)
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(transformer_output)#(bert.layers[-1].output)
 
-    flatten_layer = Flatten()(slice_layer)
+    slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
+    flatten_CLS = Flatten()(slice_CLS)
+
+    # Needed to avoid a json serialization error when saving the model.
+    last_position = args.seq_len-1
+    slice_SEP = Lambda(lambda x: K.slice(x, [0, last_position, 0], [-1, 1, -1]), name="slice_SEP")(drop_mask)
+    flatten_SEP = Flatten()(slice_SEP)
+
+    permute_layer = Permute((2, 1))(drop_mask)
+
+    all_average = GlobalAveragePooling1D()(drop_mask)
+    #cls_average2 = GlobalAveragePooling1D()(drop_mask)
+    permute_average = GlobalAveragePooling1D()(permute_layer)
+
+    all_maximum =  GlobalMaxPooling1D()(drop_mask)
+    #cls_maximum2 =  GlobalMaxPooling1D()(drop_mask)
+    permute_maximum =  GlobalMaxPooling1D()(permute_layer)
+
+    concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
+
+    #slice_layer3 = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 128, -1]), name="slice_128")(drop_mask)
+
+    #flatten_layer = Flatten()(slice_layer3)
 
     #avg_pool = GlobalAveragePooling1D()(drop_mask)
 
     #dropout_layer = Dropout(args.dropout)(drop_mask)
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid')(flatten_layer)
+    # TODO: try concat of avg and max pools of both CLS and the permutation
+
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat)
 
     model = Model(bert.input, output_layer)
 
@@ -214,6 +240,7 @@ def build_model(args):
         model = multi_gpu_model(template_model, gpus=args.gpus)
 
     callbacks = [Metrics()]
+    # CyclicLR(5e-5, 1e-4, 10000, "triangular2")
 
     if args.patience > -1:
         callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
@@ -223,11 +250,12 @@ def build_model(args):
 
     total_steps, warmup_steps =  calc_train_steps(num_example=get_example_count(args.train),
                                                 batch_size=args.batch_size, epochs=args.epochs,
-                                                warmup_proportion=0.1)
+                                                warmup_proportion=0.01)
 
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
+    # optimizer = Adam(args.lr)
 
-    model.compile(loss="binary_crossentropy", optimizer=optimizer, metrics=["accuracy"])
+    model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=["accuracy"])
 
     print(model.summary(line_length=118))
     print("Number of GPUs in use:", args.gpus)
@@ -242,6 +270,7 @@ def build_model(args):
                         validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 
+    print("Saving model:", args.output_file)
     if args.gpus > 1:
         template_model.save(args.output_file)
     else:

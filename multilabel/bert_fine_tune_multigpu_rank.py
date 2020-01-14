@@ -79,7 +79,7 @@ def data_generator(file_path, batch_size, seq_len=512):
             for line in cr:
                 if len(text) == batch_size:
                     # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-                    yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+                    yield ([np.asarray(text), np.zeros_like(text)], [np.asarray(labels), np.asarray(len(labels))])
                     text = []
                     labels = []
                 text.append(np.asarray(json.loads(line[0]))[0:seq_len])
@@ -114,7 +114,7 @@ class Metrics(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         print("Predicting probabilities..")
-        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
+        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=False,
                                                     steps=ceil(get_example_count(args.dev) / args.eval_batch_size))
         print("Probabilities to labels..")
         if args.label_mapping is not None:
@@ -148,13 +148,13 @@ def build_model(args):
     # config.gpu_options.allow_growth = True
     # K.set_session(tf.compat.v1.Session(config=config))
 
-    if args.use_fp16:
-        tf.keras.mixed_precision.experimental.set_policy('mixed_float16')
-        print("Using fp16 policy.")
+    # if args.use_fp16:
+    #     tf.keras.mixed_precision.experimental.set_policy('mixed_float16')
+    #     print("Using fp16 policy.")
 
     print("Building model..")
     bert = load_trained_model_from_checkpoint(args.bert_config, args.init_checkpoint,
-                                                training=False, trainable=True,
+                                                training=False, trainable=False,
                                                 seq_len=args.seq_len)
 
     #slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
@@ -211,9 +211,13 @@ def build_model(args):
 
     #dropout_layer = Dropout(args.dropout)(drop_mask)
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', dtype='float32')(flatten_layer)
+    #output_layer = Dense(get_label_dim(args.train), activation='sigmoid', dtype='float32')(flatten_layer)
 
-    model = Model(bert.input, output_layer)
+    import csrank
+
+    rank_model = csrank.objectranking.ListNet(n_object_features=768, n_top=1000).construct_model()(flatten_layer)
+
+    model = Model(bert.input, [rank_model.output, n_label_out])
 
     if args.gpus > 1:
         template_model = model
@@ -244,7 +248,7 @@ def build_model(args):
 
     model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
                         steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
-                        use_multiprocessing=True, epochs=args.epochs, callbacks=callbacks,
+                        use_multiprocessing=False, epochs=args.epochs, callbacks=callbacks,
                         validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 

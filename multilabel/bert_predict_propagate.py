@@ -10,6 +10,8 @@ from math import ceil
 from xopen import xopen
 from tqdm import tqdm
 
+from functools import lru_cache
+
 from scipy.sparse import lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
 
@@ -51,13 +53,14 @@ def argparser():
     arg_parse.add_argument("--f1_threshold_start", help="Positive label prediction threshold range start.", metavar="FLOAT", default=0.1, type=float)
     arg_parse.add_argument("--f1_threshold_end", help="Positive label prediction threshold range end, exclusive.", metavar="FLOAT", default=1.0, type=float)
     arg_parse.add_argument("--f1_threshold_step", help="Positive label prediction threshold range step.", metavar="FLOAT", default=0.1, type=float)
-    arg_parse.add_argument("--output_file", help="File to which save the prediction results, .gz file extension recommended for compression!", metavar="FILE", default="predict_output.txt")
+    arg_parse.add_argument("--output_file", help="File to which save the prediction results, .gz file extension recommended for compression!", metavar="FILE", default="predict_output.txt.gz")
     arg_parse.add_argument("--output_labels_threshold", help="Positive label prediction threshold for output file.", metavar="FLOAT", default=0.5, type=float)
     arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length.", metavar="INT", default=512, type=int)
     arg_parse.add_argument("--clip_value", help="Set scores lower than this to 0.", metavar="FLOAT", default=1e-4, type=float)
     arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
     return arg_parse.parse_args()
+
 
 def main(args):
 
@@ -85,21 +88,61 @@ def main(args):
             labels_true.append(json.loads(line[1]))
         labels_true = lil_matrix(labels_true)
 
+    label_to_index = {k:v for v,k in enumerate(label_names)}
+
+    # from collections import defaultdict
+    # parent_dict = defaultdict(list)
+
+    import networkx
+
+    # Build graph for label propagation.
+    graph = networkx.DiGraph()
+
+    with xopen("/mnt/extra_raid/sukaew/CAFA4/data/CAFA3/ctrl_sequences/strong/parent_term2term.txt.gz") as f:
+        cr = csv.reader(f, delimiter='\t')
+        next(cr) # skip header
+        for line in cr:
+            try:
+            #parent_dict[label_to_index[line[1]]].append(label_to_index[line[0]])
+                graph.add_edge(label_to_index[line[0]], label_to_index[line[1]])
+            except KeyError: # Label not found in training data.
+                pass
+
+    #print(label_names[parent_dict[label_to_index["GO:0032042"]]])
+
     print("Predicting..")
     labels_prob = model.predict_generator(data_generator(args.test, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.test) / args.eval_batch_size), verbose=1)
     # This makes json.dumps go faster and increases compression.
     labels_prob[labels_prob<args.clip_value] = 0
-    print(labels_prob.shape)
+    print(labels_prob.shape)    
+
+    missing_labels = set()
+
     for threshold in np.arange(args.f1_threshold_start, args.f1_threshold_end, args.f1_threshold_step):
         print("Threshold:", threshold)
-        labels_pred = lil_matrix(labels_prob.shape, dtype='b')
+        labels_pred = np.zeros(labels_prob.shape, dtype='b')
         labels_pred[labels_prob>threshold] = 1
+        for example_index in tqdm(range(labels_pred.shape[0])):
+            parent_indices = set()
+            for label_index in np.where(labels_pred[example_index] == 1)[0]:
+                try:
+                    for parent in networkx.ancestors(graph, label_index):
+                        parent_indices.add(parent)
+                except:
+                    missing_labels.add(label_names[label_index])
+                    #print(label_names[label_index], "not found in graph!")
+                #print(parent_indices)
+            #print(labels_pred[example_index, list(parent_indices)])
+            labels_pred[example_index, list(parent_indices)] = 1
+            #print(labels_pred[example_index, list(parent_indices)]); input()
         precision, recall, f1, _ = precision_recall_fscore_support(labels_true, labels_pred, average="micro")
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
-    
+        
+    print("Labels not found in parent_term2term:", missing_labels)
+
     pos_labels = []
     for example in labels_prob:
         example_labels = []
