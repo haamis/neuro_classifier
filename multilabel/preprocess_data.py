@@ -1,4 +1,11 @@
-import csv, gzip, json, os, pickle, sys
+import csv, gzip, os, pickle, sys
+csv.field_size_limit(sys.maxsize)
+
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 import numpy as np
 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
@@ -48,7 +55,6 @@ def cafa_reader(file):
     return examples, labels
 
 def eng_reader(file):
-    csv.field_size_limit(sys.maxsize)
     examples = []
     labels = []
     csv_reader = csv.reader(file, delimiter="\t")
@@ -79,7 +85,7 @@ def tokenize(text, tokenizer, maxlen=512):
     return ["[CLS]"] + tokenizer.tokenize(text)[:maxlen-2] + ["[SEP]"]
 
 def vectorize(text, vocab, maxlen=512):
-    return csr_matrix([vocab[token] for token in text] + [0] * (maxlen - len(text)), dtype="uint16")
+    return np.array([vocab[token] for token in text] + [0] * (maxlen - len(text)), dtype="uint16")
 
 def preprocess_data(args):
 
@@ -156,13 +162,12 @@ def preprocess_data(args):
         else:
             file_name = file_basename + "-processed.gz"
         with xopen(file_name, "wt") as f:
-            print("Writing ", file_name)
             cw = csv.writer(f, delimiter="\t")
             # Write number of examples as the first row, useful for the finetuning.
             cw.writerow([len(examples_list[i])])
-            for example, label in zip(examples_list[i], labels_list[i]):
+            for example, label in tqdm(zip(examples_list[i], labels_list[i]), desc="Writing " + file_name):
                 # Convert sparse arrays to python lists for json dumping.
-                cw.writerow( ( json.dumps(example.todense().tolist()[0]), json.dumps(label.todense().tolist()[0]) ) )
+                cw.writerow( ( json.dumps(example.tolist()), json.dumps(label.todense().tolist()[0]) ) )
 
 if __name__ == '__main__':
     args = argparser()

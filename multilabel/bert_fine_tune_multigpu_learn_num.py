@@ -1,5 +1,10 @@
-import csv, json, os
+import csv, os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+try:
+    import ujson as json
+except ImportError:
+    import json
 
 import tensorflow as tf
 tf.logging.set_verbosity(tf.logging.ERROR)
@@ -20,6 +25,7 @@ from sklearn.metrics import precision_recall_fscore_support
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape, Permute
+#from keras.layers import CuDNNLSTM as LSTM
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
@@ -81,7 +87,7 @@ def data_generator(file_path, batch_size, seq_len=512):
             for line in cr:
                 if len(text) == batch_size:
                     # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-                    yield ([np.asarray(text), np.zeros_like(text)], [np.asarray(labels), np.asarray([np.count_nonzero(l) for l in labels])])
+                    yield ([np.asarray(text), np.zeros_like(text)], [np.asarray(labels), np.asarray([np.count_nonzero(l) for l in labels])]) 
                     text = []
                     labels = []
                 text.append(np.asarray(json.loads(line[0]))[0:seq_len])
@@ -127,30 +133,17 @@ class Metrics(Callback):
 
             labels_prob = full_labels_prob
         
-        # Threshold.
-        # for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
-        #     print("Threshold:", threshold)
-        #     labels_pred = lil_matrix(labels_prob.shape, dtype='b')
-        #     labels_pred[labels_prob>threshold] = 1
-        #     precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
-        #     if f1 > self.best_f1:
-        #         self.best_f1 = f1
-        #         self.best_f1_epoch = epoch
-        #         self.best_f1_threshold = threshold
-        #     print("Precision:", precision)
-        #     print("Recall:", recall)
-        #     print("F1-score:", f1, "\n")
-
         # Learning label num.
-        num_labels = num_labels.astype(int)
-        num_lab = num_labels[0][0]
-        print(num_labels[0][0])
-        prob_sorted = np.argsort(labels_prob, axis=1)
-        print(prob_sorted[0, -num_lab:])
+        num_lab = np.argmax(num_labels, axis=-1)[0]
+        print(num_labels[0].tolist())
+        print(num_lab)
+        prob_argsorted = np.argsort(labels_prob, axis=-1)
+        print(prob_argsorted[0, -num_lab:])
         labels_pred = np.zeros(labels_prob.shape, dtype='b')
-        
+
         for example_index in tqdm(range(labels_prob.shape[0]), desc="Setting positives"):
-                labels_pred[example_index, prob_sorted[example_index][-(num_labels[example_index][0]):]] = 1
+                label_indices = np.flip(prob_argsorted[example_index])[:np.argmax(num_labels[example_index], axis=-1)]
+                labels_pred[example_index, label_indices] = 1
 
         precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
         if f1 > self.best_f1:
@@ -245,7 +238,12 @@ def build_model(args):
     drop_mask_num = Lambda(lambda x: x, name="drop_mask_num")(transformer_output_num)
     slice_num = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_num")(drop_mask_num)
     flatten_num = Flatten()(slice_num)
-    num_output_layer = Dense(1, name="num_out")(flatten_num)
+    concat_num = Concatenate()([flatten_num, output_layer])
+    dense_num = Dense(1024, activation='relu')(output_layer)
+    num_output_layer = Dense(get_label_dim(args.train), activation=None, use_bias=False,
+                            kernel_regularizer=keras.regularizers.l2(0.01), name="num_out")(dense_num)
+    num_output_layer = keras.layers.BatchNormalization()(num_output_layer)
+    num_output_layer = keras.layers.Activation('softmax')(num_output_layer)
 
     model = Model(bert.input, [output_layer, num_output_layer])
 
@@ -254,6 +252,7 @@ def build_model(args):
         model = multi_gpu_model(template_model, gpus=args.gpus)
 
     callbacks = [Metrics()]
+    # callbacks = []
     # CyclicLR(5e-5, 1e-4, 10000, "triangular2")
 
     if args.patience > -1:
@@ -269,8 +268,8 @@ def build_model(args):
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
     # optimizer = Adam(args.lr)
 
-    model.compile(loss=["binary_crossentropy", "mean_absolute_error"], loss_weights=[100, 0.01], 
-                                optimizer=optimizer, metrics=["accuracy"])
+    model.compile(loss=["categorical_crossentropy","sparse_categorical_crossentropy"], loss_weights=[1, 1], 
+                                optimizer=optimizer, metrics=["mean_absolute_error"])
 
     print(model.summary(line_length=118))
     print("Number of GPUs in use:", args.gpus)

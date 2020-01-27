@@ -1,4 +1,9 @@
-import csv, json, os
+import csv, os
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
@@ -32,7 +37,7 @@ from keras_self_attention import SeqSelfAttention
 from keras_position_wise_feed_forward import FeedForward
 from keras_transformer import get_encoder_component
 
-from keras_contrib.callbacks import CyclicLR
+#from keras_contrib.callbacks import CyclicLR
 
 
 def argparser():
@@ -97,7 +102,6 @@ class Metrics(Callback):
         self.best_f1_epoch = 0
         self.best_f1_threshold = 0
 
-        #print("Metrics init, reading dev labels..")
         self.all_labels = []
         if args.label_mapping is not None:
             file_name = args.dev_all
@@ -129,7 +133,7 @@ class Metrics(Callback):
         for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
             print("Threshold:", threshold)
             labels_pred = lil_matrix(labels_prob.shape, dtype='b')
-            labels_pred[labels_prob>threshold] = 1
+            labels_pred[labels_prob>=threshold] = 1
             precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
             if f1 > self.best_f1:
                 self.best_f1 = f1
@@ -199,7 +203,7 @@ def build_model(args):
     # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
     #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    drop_mask = Lambda(lambda x: x, name="drop_mask")(transformer_output)#(bert.layers[-1].output)
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(bert.layers[-1].output)#(transformer_output)#
 
     slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
     flatten_CLS = Flatten()(slice_CLS)
@@ -211,17 +215,19 @@ def build_model(args):
 
     permute_layer = Permute((2, 1))(drop_mask)
 
-    all_average = GlobalAveragePooling1D()(drop_mask)
+    # all_average = GlobalAveragePooling1D()(drop_mask)
     #cls_average2 = GlobalAveragePooling1D()(drop_mask)
     permute_average = GlobalAveragePooling1D()(permute_layer)
 
-    all_maximum =  GlobalMaxPooling1D()(drop_mask)
+    # all_maximum =  GlobalMaxPooling1D()(drop_mask)
     #cls_maximum2 =  GlobalMaxPooling1D()(drop_mask)
     permute_maximum =  GlobalMaxPooling1D()(permute_layer)
 
+    # slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 32, -1]), name="slice_128")(drop_mask)
+    # flatten = Flatten()(slice_layer)
+    
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
-    #slice_layer3 = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 128, -1]), name="slice_128")(drop_mask)
 
     #flatten_layer = Flatten()(slice_layer3)
 
@@ -231,7 +237,8 @@ def build_model(args):
 
     # TODO: try concat of avg and max pools of both CLS and the permutation
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat)
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(flatten_CLS)
+    #output_layer = keras.layers.BatchNormalization()(output_layer)
 
     model = Model(bert.input, output_layer)
 
@@ -255,7 +262,7 @@ def build_model(args):
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
     # optimizer = Adam(args.lr)
 
-    model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=["accuracy"])
+    model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=[])
 
     print(model.summary(line_length=118))
     print("Number of GPUs in use:", args.gpus)
@@ -269,6 +276,15 @@ def build_model(args):
                         use_multiprocessing=True, epochs=args.epochs, callbacks=callbacks,
                         validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
+
+    # print("Switching to hinge")
+    # model.compile(loss=["hinge"], optimizer=optimizer, metrics=["accuracy"])
+
+    # model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
+    #                     steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
+    #                     use_multiprocessing=True, epochs=args.epochs-args.epochs//10, callbacks=callbacks,
+    #                     validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
+    #                     validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 
     print("Saving model:", args.output_file)
     if args.gpus > 1:

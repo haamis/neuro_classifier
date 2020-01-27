@@ -127,7 +127,7 @@ class Metrics(Callback):
         for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
             print("Threshold:", threshold)
             labels_pred = lil_matrix(labels_prob.shape, dtype='b')
-            labels_pred[labels_prob>threshold] = 1
+            labels_pred[labels_prob>=threshold] = 1
             precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
             if f1 > self.best_f1:
                 self.best_f1 = f1

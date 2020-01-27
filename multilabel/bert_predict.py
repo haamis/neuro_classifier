@@ -1,4 +1,10 @@
-import sys, json, csv
+import sys, csv
+csv.field_size_limit(sys.maxsize)
+
+try:
+    import ujson as json
+except ImportError:
+    import json
 
 import tensorflow as tf
 import keras.backend as K
@@ -10,8 +16,9 @@ from math import ceil
 from xopen import xopen
 from tqdm import tqdm
 
-from scipy.sparse import lil_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import precision_recall_curve
 
 from keras.backend.tensorflow_backend import set_session
 from keras.models import load_model
@@ -77,42 +84,62 @@ def main(args):
         with open() as f:
             label_mapping = json.load(f)
 
-    labels_true = []
     with xopen(args.test, "rt") as f:
         cr = csv.reader(f, delimiter="\t")
-        next(cr) # Skip example number row.
-        for line in tqdm(cr, desc="Loading test data"):
-            labels_true.append(json.loads(line[1]))
-        labels_true = lil_matrix(labels_true)
+        example_num = int(next(cr)[0]) # Number of examples is stored in the first row.
+        labels_true = lil_matrix((example_num, len(label_names)), dtype='b')
+        for i, line in tqdm(enumerate(cr), desc="Loading test data"):
+            labels_true[i] = json.loads(line[1])
 
     print("Predicting..")
     labels_prob = model.predict_generator(data_generator(args.test, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.test) / args.eval_batch_size), verbose=1)
+
+    # If we get 2 matrices, just take the probabilites and not the label amount.
+    if labels_prob.shape[0] == 2:
+        labels_prob = np.asarray(labels_prob)[0]
+
     # This makes json.dumps go faster and increases compression.
     labels_prob[labels_prob<args.clip_value] = 0
     print(labels_prob.shape)
+    precisions = []
+    recalls = []
     for threshold in np.arange(args.f1_threshold_start, args.f1_threshold_end, args.f1_threshold_step):
         print("Threshold:", threshold)
         labels_pred = lil_matrix(labels_prob.shape, dtype='b')
-        labels_pred[labels_prob>threshold] = 1
+        labels_pred[labels_prob>=threshold] = 1
         precision, recall, f1, _ = precision_recall_fscore_support(labels_true, labels_pred, average="micro")
+        precisions.append(precision)
+        recalls.append(recall)
         print("Precision:", precision)
         print("Recall:", recall)
         print("F1-score:", f1, "\n")
-    
-    pos_labels = []
-    for example in labels_prob:
-        example_labels = []
-        for i, label_prob in enumerate(example):
-            if label_prob > args.output_labels_threshold:
-                #print("Label found!")
-                example_labels.append(label_names[i])
-        pos_labels.append(example_labels)
 
-    with xopen(args.output_file, "wt") as f:
-        cw_out = csv.writer(f)
-        for prob, labels in tqdm(zip(labels_prob, pos_labels), desc="Writing " + args.output_file):
-            cw_out.writerow( (json.dumps(prob.tolist()), json.dumps(labels)) )
+    import matplotlib.pyplot as plt
+
+    f_scores = np.linspace(0.1, 0.9, num=9)
+    lines = []
+    labels = []
+    for f_score in f_scores:
+        x = np.linspace(0.01, 1)
+        y = f_score * x / (2 * x - f_score)
+        l, = plt.plot(x[y >= 0], y[y >= 0], color='gray', alpha=0.2)
+        plt.annotate('f1={0:0.1f}'.format(f_score), xy=(0.9, y[45] + 0.02))
+    plt.plot(recalls, precisions)
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.ylim(0, 1.0)
+    plt.xlim(0,1.0)
+    plt.title("Precision-Recall for " + args.model.split('/')[-1])
+    plt.savefig(args.model.split('/')[-1] + "_graph.png")
+
+    pos_labels = np.zeros(labels_prob.shape, dtype='b')
+    pos_labels[labels_prob>args.output_labels_threshold] = 1
+
+    # with xopen(args.output_file, "wt") as f:
+    #     cw_out = csv.writer(f)
+    #     for prob, labels in tqdm(zip(labels_prob, pos_labels), desc="Writing " + args.output_file):
+    #         cw_out.writerow( (json.dumps(prob.tolist()), json.dumps(labels.tolist())) )
 
 if __name__ == "__main__":
     main(argparser())
