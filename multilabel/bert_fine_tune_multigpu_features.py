@@ -1,7 +1,13 @@
-import csv, json, os
+import csv, os
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
+tf.logging.set_verbosity(tf.logging.ERROR)
 
 import keras
 import keras.backend as K
@@ -14,17 +20,15 @@ from xopen import xopen
 
 from tqdm import tqdm
 
-from scipy.sparse import lil_matrix, csr_matrix, coo_matrix
+from scipy.sparse import lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
 
-# tensorflow.
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
-from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Permute, Reshape
+from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape, Permute, Input
 from keras.models import Model
+from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
 
-# Set for keras_bert to work with tf.keras.
-#os.environ['TF_KERAS'] = '1'
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
 from keras_bert.activations import gelu
@@ -33,11 +37,14 @@ from keras_self_attention import SeqSelfAttention
 from keras_position_wise_feed_forward import FeedForward
 from keras_transformer import get_encoder_component
 
+#from keras_contrib.callbacks import CyclicLR
+
 
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     arg_parse.add_argument("--train", help="Processed train file.", metavar="FILE", required=True)
     arg_parse.add_argument("--dev", help="Processed dev file.", metavar="FILE", required=True)
+    arg_parse.add_argument("--features", help="Features file", metavar="FILE", required=True)
     arg_parse.add_argument("--init_checkpoint", help="BERT tensorflow model with path ending in .ckpt", metavar="PATH", required=True)
     arg_parse.add_argument("--bert_config", help="BERT config file.", metavar="FILE", required=True)
     arg_parse.add_argument("--batch_size", help="Batch size to use for finetuning.", metavar="INT", type=int, required=True)
@@ -55,8 +62,6 @@ def argparser():
     arg_parse.add_argument("--threshold_end", help="Positive label prediction threshold range end, exclusive.", metavar="FLOAT", default=1.0, type=float)
     arg_parse.add_argument("--threshold_step", help="Positive label prediction threshold range step.", metavar="FLOAT", default=0.1, type=float)
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
-    arg_parse.add_argument("--use_fp16", help="Don't use mixed precision/fp16 training", action="store_true")
-    
     return arg_parse.parse_args()
 
 # Read example count from the first row a preprocessed file.
@@ -72,52 +77,45 @@ def get_label_dim(file_path):
         next(cr) # Skip example number row.
         return len(json.loads(next(cr)[1]))
 
-def neg_generator(batch_size):
+def data_generator(file_path, batch_size, seq_len=512, features=None):
     while True:
-        for file_name in [args.train, args.dev]:
-            with xopen(file_name, "rt") as f:
+        if features is not None:
+            features_f = xopen(features, "rt")
+            with xopen(file_path, "rt") as f:
+                cr = csv.reader(f, delimiter="\t")
+                cr_features = csv.reader(features_f, delimiter="\t")
+                next(cr) # Skip example number row.
+                text = []
+                features = []
+                labels = []
+                for line, line_features in cr, cr_features:
+                    if len(text) == batch_size:
+                        # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
+                        yield ([np.asarray(text), np.zeros_like(text), np.asarray(features)], np.asarray(labels))
+                        text = []
+                        features = []
+                        labels = []
+                    text.append(np.asarray(json.loads(line[0]))[0:seq_len])
+                    features.append(np.asarray(json.loads(line)))
+                    labels.append(np.asarray(json.loads(line[1])))
+                # Yield what is left as the last batch when file has been read to its end.
+                yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+        else:
+            with xopen(file_path, "rt") as f:
                 cr = csv.reader(f, delimiter="\t")
                 next(cr) # Skip example number row.
+                text = []
                 labels = []
                 for line in cr:
-                    if len(labels) == batch_size:
-                        yield (np.asarray(labels))
+                    if len(text) == batch_size:
+                        # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
+                        yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+                        text = []
                         labels = []
-                    true_labels = np.array(json.loads(line[1]))
-                    non_positives = np.argwhere(true_labels == 0)
-                    negative_indices = non_positives[:np.count_nonzero(true_labels)]
-                    neg_labels = np.zeros_like(true_labels)
-                    neg_labels[negative_indices] = 1
-                    labels.append(np.asarray(neg_labels))
-                print(len(labels))
-                yield (np.asarray(labels))
-
-def data_generator(file_path, batch_size, seq_len=512):
-    while True:
-        with xopen(file_path, "rt") as f:
-            cr = csv.reader(f, delimiter="\t")
-            next(cr) # Skip example number row.
-            text = []
-            labels = []
-            #neg_labels = []
-            for line in cr:
-                if len(text) == batch_size:
-                    # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-                    yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels)) #[np.asarray(labels), np.asarray(neg_labels)])
-                    text = []
-                    labels = []
-                    #neg_labels = []
-                # true_labels = np.array(json.loads(line[1]))
-                # non_positives = np.argwhere(true_labels == 0)
-                # negative_indices = non_positives[:np.count_nonzero(true_labels)]
-                # neg_example_labels= np.zeros_like(true_labels)
-                # neg_example_labels[negative_indices] = 1
-                text.append(np.asarray(json.loads(line[0]))[0:seq_len])
-                labels.append(np.asarray(json.loads(line[1])))
-                #neg_labels.append(np.asarray(neg_example_labels))
-            # Yield what is left as the last batch when file has been read to its end.
-            #print(len(text))
-            yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels)) #[np.asarray(labels), np.asarray(neg_labels)])
+                    text.append(np.asarray(json.loads(line[0]))[0:seq_len])
+                    labels.append(np.asarray(json.loads(line[1])))
+                # Yield what is left as the last batch when file has been read to its end.
+                yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
 
 class Metrics(Callback):
 
@@ -137,7 +135,7 @@ class Metrics(Callback):
             next(cr) # Skip example number row.
             for line in tqdm(cr, desc="Reading dev labels"):
                 self.all_labels.append(json.loads(line[1]))
-            self.all_labels = lil_matrix(self.all_labels)
+            self.all_labels = lil_matrix(self.all_labels, dtype='b')
             print("Dev labels shape:", self.all_labels.shape)
         if args.dev_all is not None:
             with xopen(args.label_mapping) as f:
@@ -145,7 +143,7 @@ class Metrics(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         print("Predicting probabilities..")
-        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=False,
+        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.dev) / args.eval_batch_size), verbose=1)
         print("Probabilities to labels..")
         if args.label_mapping is not None:
@@ -154,7 +152,7 @@ class Metrics(Callback):
                np.put(full_labels_prob[i], self.labels_mapping, probs)
 
             labels_prob = full_labels_prob
-
+        
         for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
             print("Threshold:", threshold)
             labels_pred = lil_matrix(labels_prob.shape, dtype='b')
@@ -167,50 +165,18 @@ class Metrics(Callback):
             print("Precision:", precision)
             print("Recall:", recall)
             print("F1-score:", f1, "\n")
+
         print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
 
-# class HingeLoss(keras.losses.Loss):
-#     def __init__(self, neg_generator, name="Hinge"):
-#         super(HingeLoss, self).__init__(name=name)
-#         self.neg_generator = neg_generator
-
-#     def call(self, y_true, y_pred):
-#         y_pos = y_pred * y_true
-#         y_pos = tf.sort(y_pos, direction='DESCENDING')
-#         print(y_pos)
-#         # Doesn't matter which y_pred we take.
-#         y_neg = y_pred * next(self.neg_generator(args.batch_size))
-#         y_neg = tf.sort(y_neg, direction='DESCENDING')
-#         print(y_neg)
-#         non_zero = tf.math.count_nonzero(y_true)
-#         #diff = y_pred[y_true] - y_neg[next(neg_generator(args.batch_size))]
-#         diff= y_pos[:, :non_zero] - y_neg[:, :non_zero]
-#         print(diff)
-#         return -K.mean(K.minimum(diff, K.zeros_like(diff)))
 
 def loss_fn(y_true, y_pred):
-    #y_something = tf.subtract(tf.scalar_mul(2, y_true), tf.scalar_mul(-1, tf.ones_like(y_true)))
-    #y_stuff = tf.multiply(y_pred, y_something)
-    y_pos = tf.multiply(y_true, y_pred)
-    y_neg = tf.where(tf.equal(y_true, tf.zeros_like(y_true)), tf.ones_like(y_true), tf.zeros_like(y_true))
-    y_neg = tf.multiply(y_neg, y_pred)
-    y_diff = y_pos - y_neg
-    return -K.mean(K.minimum(y_diff-0.1, K.zeros_like(y_diff)))
-
-def multilabel_softmax(y_true, y_pred):
-    # True not softmaxed, scaling.
-    # num_labels = tf.math.count_nonzero(y_true, dtype="float32")
-    # return tf.math.multiply(tf.math.divide(1, num_labels), keras.losses.categorical_crossentropy(y_true, y_pred))
-    
-    # True also softmaxed, no scaling.
-    y_true = keras.activations.softmax(y_true)
-    return keras.losses.categorical_crossentropy(y_true, y_pred)
+    return keras.losses.binary_crossentropy(y_true, y_pred) + keras.losses.categorical_hinge(y_true, y_pred)
 
 def build_model(args):
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
-    # #config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
+    #config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
     K.set_session(tf.Session(config=config))
 
     print("Building model..")
@@ -218,16 +184,49 @@ def build_model(args):
                                                 training=False, trainable=True,
                                                 seq_len=args.seq_len)
 
+    #slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
+
+    # slices = []
+    # for i in range(1, 13):
+    #     layer_name = "Encoder-" + str(i) + "-FeedForward-Norm"
+    #     cls_slice = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer(layer_name).output)
+    #     # Simple layer to drop masking as it does not pass it along with layer.compute_mask().
+    #     slices.append(Lambda(lambda x: x)(cls_slice))
+
+    # cls_average = Average()(slices)
+    # # This reshape might seem odd, but is required.
+    # slices_shaped = Reshape((768,))(cls_average)
+    # print(slices_shaped.shape)
+
+    # Simple layer to drop masking as it does not pass it along with layer.compute_mask().
+    # drop_mask = Lambda(lambda x: x)(bert.get_layer("Encoder-12-FeedForward-Norm").output)
+
+    # conv1 = Conv1D(250, 25, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv2 = Conv1D(250, 10, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv3 = Conv1D(250, 3, padding='valid', activation='relu', strides=1)(drop_mask)
+    # conv4 = Conv1D(250, 1, padding='valid', activation='relu', strides=1)(drop_mask)
+
+    # max_pool1 = GlobalMaxPooling1D()(conv1)
+    # max_pool2 = GlobalMaxPooling1D()(conv2)
+    # max_pool3 = GlobalMaxPooling1D()(conv3)
+    # max_pool4 = GlobalMaxPooling1D()(conv4)
+
+    # concat = Concatenate()([max_pool1, max_pool2, max_pool3, max_pool4])
+
+    #attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
+
     transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
-                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
-        
+                                            head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
+                                            dropout_rate=0.1)
+
     # transformer_output2 = get_encoder_component(name="Encoder-14", input_layer=transformer_output,
-    #                                         head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+    #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
+    #                                        dropout_rate=0.1)
 
     # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
-    #                                         head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
+    #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    drop_mask = Lambda(lambda x: x)(transformer_output)
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(bert.layers[-1].output)#(transformer_output)#
 
     slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
     flatten_CLS = Flatten()(slice_CLS)
@@ -239,31 +238,34 @@ def build_model(args):
 
     permute_layer = Permute((2, 1))(drop_mask)
 
+    # all_average = GlobalAveragePooling1D()(drop_mask)
+    #cls_average2 = GlobalAveragePooling1D()(drop_mask)
     permute_average = GlobalAveragePooling1D()(permute_layer)
 
+    # all_maximum =  GlobalMaxPooling1D()(drop_mask)
+    #cls_maximum2 =  GlobalMaxPooling1D()(drop_mask)
     permute_maximum =  GlobalMaxPooling1D()(permute_layer)
+
+    # slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 32, -1]), name="slice_128")(drop_mask)
+    # flatten = Flatten()(slice_layer)
     
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
-    output_layer = Dense(get_label_dim(args.train), activation='softmax')(concat)
+    input_features = Input(shape=(get_label_dim(args.train),))
+
+    concat_features = Concatenate()([concat, input_features])
+
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat_features)
+    #output_layer = keras.layers.BatchNormalization()(output_layer)
 
     model = Model(bert.input, output_layer)
-    #model.run_eagerly = True
 
     if args.gpus > 1:
         template_model = model
         model = multi_gpu_model(template_model, gpus=args.gpus)
 
-    total_steps, warmup_steps =  calc_train_steps(num_example=get_example_count(args.train),
-                                                batch_size=args.batch_size, epochs=args.epochs,
-                                                warmup_proportion=0.1)
-
-    optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
-
-    model.compile(loss=multilabel_softmax, optimizer=optimizer, metrics=["accuracy"]) # run_eagerly = False
-    
     callbacks = [Metrics()]
-    #callbacks = []
+    # CyclicLR(5e-5, 1e-4, 10000, "triangular2")
 
     if args.patience > -1:
         callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
@@ -271,12 +273,21 @@ def build_model(args):
     if args.checkpoint_interval > 0:
         callbacks.append(ModelCheckpoint(args.output_file + ".checkpoint-{epoch}",  period=args.checkpoint_interval))
 
+    total_steps, warmup_steps =  calc_train_steps(num_example=get_example_count(args.train),
+                                                batch_size=args.batch_size, epochs=args.epochs,
+                                                warmup_proportion=0.01)
+
+    optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
+    # optimizer = Adam(args.lr)
+
+    model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=[])
+
     print(model.summary(line_length=118))
     print("Number of GPUs in use:", args.gpus)
     print("Batch size:", args.batch_size)
     print("Learning rate:", args.lr)
     print("Dropout:", args.dropout)
-    print(model.loss, model.layers[-1].activation)
+
 
     model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
                         steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
@@ -285,13 +296,15 @@ def build_model(args):
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 
     # print("Switching to hinge")
-    # model.compile(loss=loss_fn, optimizer=optimizer, metrics=["accuracy"])
+    # model.compile(loss=["hinge"], optimizer=optimizer, metrics=["accuracy"])
 
     # model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
     #                     steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
     #                     use_multiprocessing=True, epochs=args.epochs-args.epochs//10, callbacks=callbacks,
     #                     validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
     #                     validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
+
+    print("Saving model:", args.output_file)
     if args.gpus > 1:
         template_model.save(args.output_file)
     else:
