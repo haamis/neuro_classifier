@@ -203,7 +203,7 @@ def build_model(args):
     # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
     #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    drop_mask = Lambda(lambda x: x, name="drop_mask")(bert.layers[-1].output)#(transformer_output)#
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(transformer_output)#(bert.layers[-1].output)#
 
     slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
     flatten_CLS = Flatten()(slice_CLS)
@@ -228,16 +228,9 @@ def build_model(args):
     
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
-
-    #flatten_layer = Flatten()(slice_layer3)
-
-    #avg_pool = GlobalAveragePooling1D()(drop_mask)
-
-    #dropout_layer = Dropout(args.dropout)(drop_mask)
-
     # TODO: try concat of avg and max pools of both CLS and the permutation
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(flatten_CLS)
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat)
     #output_layer = keras.layers.BatchNormalization()(output_layer)
 
     model = Model(bert.input, output_layer)
