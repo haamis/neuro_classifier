@@ -1,4 +1,6 @@
-import csv, os
+import csv, os, sys
+csv.field_size_limit(sys.maxsize)
+
 try:
     import ujson as json
 except ImportError:
@@ -24,7 +26,7 @@ from scipy.sparse import lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
 
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
-from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape, Permute, Input
+from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape, Permute, Input, TimeDistributed
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
@@ -44,7 +46,8 @@ def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     arg_parse.add_argument("--train", help="Processed train file.", metavar="FILE", required=True)
     arg_parse.add_argument("--dev", help="Processed dev file.", metavar="FILE", required=True)
-    arg_parse.add_argument("--features", help="Features file", metavar="FILE", required=True)
+    arg_parse.add_argument("--features_train", help="Features file", metavar="FILE", required=True)
+    arg_parse.add_argument("--features_dev", help="Features file", metavar="FILE", required=True)
     arg_parse.add_argument("--init_checkpoint", help="BERT tensorflow model with path ending in .ckpt", metavar="PATH", required=True)
     arg_parse.add_argument("--bert_config", help="BERT config file.", metavar="FILE", required=True)
     arg_parse.add_argument("--batch_size", help="Batch size to use for finetuning.", metavar="INT", type=int, required=True)
@@ -86,21 +89,22 @@ def data_generator(file_path, batch_size, seq_len=512, features=None):
                 cr_features = csv.reader(features_f, delimiter="\t")
                 next(cr) # Skip example number row.
                 text = []
-                features = []
+                feature_labels = []
                 labels = []
-                for line, line_features in cr, cr_features:
+                for line, line_features in zip(cr, cr_features):
                     if len(text) == batch_size:
                         # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-                        yield ([np.asarray(text), np.zeros_like(text), np.asarray(features)], np.asarray(labels))
+                        yield ([np.asarray(text), np.zeros_like(text), np.asarray(feature_labels)], np.asarray(labels))
                         text = []
-                        features = []
+                        feature_labels = []
                         labels = []
                     text.append(np.asarray(json.loads(line[0]))[0:seq_len])
-                    features.append(np.asarray(json.loads(line)))
+                    feature_labels.append(np.asarray(json.loads(line_features[0])))
                     labels.append(np.asarray(json.loads(line[1])))
                 # Yield what is left as the last batch when file has been read to its end.
-                yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+                yield ([np.asarray(text), np.zeros_like(text), np.asarray(feature_labels)], np.asarray(labels))
         else:
+            label_dim = get_label_dim(file_path)
             with xopen(file_path, "rt") as f:
                 cr = csv.reader(f, delimiter="\t")
                 next(cr) # Skip example number row.
@@ -109,16 +113,15 @@ def data_generator(file_path, batch_size, seq_len=512, features=None):
                 for line in cr:
                     if len(text) == batch_size:
                         # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-                        yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+                        yield ([np.asarray(text), np.zeros_like(text), np.zeros((len(text), label_dim))], np.asarray(labels))
                         text = []
                         labels = []
                     text.append(np.asarray(json.loads(line[0]))[0:seq_len])
                     labels.append(np.asarray(json.loads(line[1])))
                 # Yield what is left as the last batch when file has been read to its end.
-                yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+                yield ([np.asarray(text), np.zeros_like(text), np.zeros((len(text), label_dim))], np.asarray(labels))
 
 class Metrics(Callback):
-
     def __init__(self):
 
         self.best_f1 = 0
@@ -142,31 +145,35 @@ class Metrics(Callback):
                 self.labels_mapping = json.loads(f.read())
 
     def on_epoch_end(self, epoch, logs=None):
-        print("Predicting probabilities..")
-        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
-                                                    steps=ceil(get_example_count(args.dev) / args.eval_batch_size), verbose=1)
-        print("Probabilities to labels..")
-        if args.label_mapping is not None:
-            full_labels_prob = np.zeros(self.all_labels.shape)
-            for i, probs in enumerate(labels_prob):
-               np.put(full_labels_prob[i], self.labels_mapping, probs)
+        if epoch > 5:
+            print("Predicting probabilities..")
+            labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len, features=args.features_dev), use_multiprocessing=True,
+                                                        steps=ceil(get_example_count(args.dev) / args.eval_batch_size), verbose=1)
 
-            labels_prob = full_labels_prob
-        
-        for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
-            print("Threshold:", threshold)
-            labels_pred = lil_matrix(labels_prob.shape, dtype='b')
-            labels_pred[labels_prob>=threshold] = 1
-            precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
-            if f1 > self.best_f1:
-                self.best_f1 = f1
-                self.best_f1_epoch = epoch
-                self.best_f1_threshold = threshold
-            print("Precision:", precision)
-            print("Recall:", recall)
-            print("F1-score:", f1, "\n")
+            print(labels_prob.shape)
+            print(self.all_labels.shape)
+            print("Probabilities to labels..")
+            if args.label_mapping is not None:
+                full_labels_prob = np.zeros(self.all_labels.shape)
+                for i, probs in enumerate(labels_prob):
+                    np.put(full_labels_prob[i], self.labels_mapping, probs)
 
-        print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
+                labels_prob = full_labels_prob
+            
+            for threshold in np.arange(args.threshold_start, args.threshold_end, args.threshold_step):
+                print("Threshold:", threshold)
+                labels_pred = lil_matrix(labels_prob.shape, dtype='b')
+                labels_pred[labels_prob>=threshold] = 1
+                precision, recall, f1, _ = precision_recall_fscore_support(self.all_labels, labels_pred, average="micro")
+                if f1 > self.best_f1:
+                    self.best_f1 = f1
+                    self.best_f1_epoch = epoch
+                    self.best_f1_threshold = threshold
+                print("Precision:", precision)
+                print("Recall:", recall)
+                print("F1-score:", f1, "\n")
+
+            print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
 
 
 def loss_fn(y_true, y_pred):
@@ -226,7 +233,7 @@ def build_model(args):
     # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
     #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
 
-    drop_mask = Lambda(lambda x: x, name="drop_mask")(bert.layers[-1].output)#(transformer_output)#
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(transformer_output)#(bert.layers[-1].output)#
 
     slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
     flatten_CLS = Flatten()(slice_CLS)
@@ -236,29 +243,36 @@ def build_model(args):
     slice_SEP = Lambda(lambda x: K.slice(x, [0, last_position, 0], [-1, 1, -1]), name="slice_SEP")(drop_mask)
     flatten_SEP = Flatten()(slice_SEP)
 
-    permute_layer = Permute((2, 1))(drop_mask)
+    permute = Permute((2, 1))(drop_mask)
 
     # all_average = GlobalAveragePooling1D()(drop_mask)
     #cls_average2 = GlobalAveragePooling1D()(drop_mask)
-    permute_average = GlobalAveragePooling1D()(permute_layer)
+    permute_average = GlobalAveragePooling1D()(permute)
 
     # all_maximum =  GlobalMaxPooling1D()(drop_mask)
     #cls_maximum2 =  GlobalMaxPooling1D()(drop_mask)
-    permute_maximum =  GlobalMaxPooling1D()(permute_layer)
+    permute_maximum =  GlobalMaxPooling1D()(permute)
 
     # slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 32, -1]), name="slice_128")(drop_mask)
     # flatten = Flatten()(slice_layer)
     
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
+    bert_scores = Dense(get_label_dim(args.train), activation="relu", name="bert_scores")(concat)
+    
     input_features = Input(shape=(get_label_dim(args.train),))
 
-    concat_features = Concatenate()([concat, input_features])
+    feature_scores = Lambda(lambda x: keras.activations.relu(x), name="feature_scores")(input_features)
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat_features)
-    #output_layer = keras.layers.BatchNormalization()(output_layer)
+    stacked = Lambda(lambda x: K.stack(x, axis=1))([bert_scores, feature_scores])
 
-    model = Model(bert.input, output_layer)
+    stacked = Permute((2, 1))(stacked)
+
+    output_layer = TimeDistributed(Dense(1, activation="sigmoid"))(stacked)
+    output_layer = Flatten()(output_layer)
+
+    # The bert model has multiple inputs, so unpack those.
+    model = Model([*bert.input, input_features], output_layer)
 
     if args.gpus > 1:
         template_model = model
@@ -278,7 +292,6 @@ def build_model(args):
                                                 warmup_proportion=0.01)
 
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
-    # optimizer = Adam(args.lr)
 
     model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=[])
 
@@ -289,10 +302,10 @@ def build_model(args):
     print("Dropout:", args.dropout)
 
 
-    model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
+    model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len, features=args.features_train),
                         steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
                         use_multiprocessing=True, epochs=args.epochs, callbacks=callbacks,
-                        validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
+                        validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len, features=args.features_dev),
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 
     # print("Switching to hinge")

@@ -1,4 +1,4 @@
-import csv, gzip, os, pickle, sys
+import csv, gzip, os, sys
 csv.field_size_limit(sys.maxsize)
 
 try:
@@ -24,7 +24,7 @@ import longestfirst
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     arg_parse.add_argument("-i", "--input_files", help="TSV input files: train, dev and test.", nargs='+', metavar="FILES", required=True)
-    arg_parse.add_argument("-t", "--task", help="Task name.", choices=["bioasq", "cafa", "eng", "mesh_xml"], required=True)
+    arg_parse.add_argument("-t", "--task", help="Task name.", choices=input_readers.keys(), required=True)
     arg_parse.add_argument("-v", "--vocab", help="BERT vocab.", metavar="FILE", required=True)
     arg_parse.add_argument("-s", "--seq_len", help="BERT's max sequence length.", metavar="INT", type=int, default=512)
     arg_parse.add_argument("-d", "--do_lower_case", help="Lowercase input text.", action="store_true")
@@ -39,10 +39,12 @@ def argparser():
 def bioasq_reader(file):
     examples = []
     labels = []
-    csv_reader = csv.reader(file, delimiter=",")
-    for line in tqdm(csv_reader, desc="Reading file"):
-        examples.append(line[1])
-        labels.append(json.loads(line[0]))
+    for line in tqdm(file, desc="Reading file"):
+        line = json.loads(line)
+        # Check title field for nulls and concat all the text fields.
+        example = " ".join([ (line["title"] or ""), line["journal"], line["abstractText"] ])
+        examples.append(example)
+        labels.append(line["meshMajor"])
     return examples, labels
 
 def cafa_reader(file):
@@ -116,7 +118,6 @@ def preprocess_data(args):
                     vocab = tokenizer.vocab
                 examples = p.map(partial(vectorize, vocab=vocab, maxlen=args.seq_len), examples)
 
-                #print("Token vectors[0] shape:", examples[0].shape)
                 examples_list.append(examples)
                 labels_list.append(labels)
 
@@ -158,16 +159,14 @@ def preprocess_data(args):
             # Split twice to get rid of two file extensions, e.g. ".tsv.gz"
             file_basename = os.path.splitext(file_basename)[0]
         if args.top_n_labels > 0:
-            file_name = file_basename + "-top-" + str(args.top_n_labels) + "-processed.gz"
+            file_name = file_basename + "-top-" + str(args.top_n_labels) + "-processed.jsonl.gz"
         else:
-            file_name = file_basename + "-processed.gz"
+            file_name = file_basename + "-processed.jsonl.gz"
         with xopen(file_name, "wt") as f:
-            cw = csv.writer(f, delimiter="\t")
-            # Write number of examples as the first row, useful for the finetuning.
-            cw.writerow([len(examples_list[i])])
+            # Write the shape as the first row, useful for the finetuning.
+            f.write(json.dumps(labels_list[i].shape) + '\n')
             for example, label in tqdm(zip(examples_list[i], labels_list[i]), desc="Writing " + file_name):
-                # Convert sparse arrays to python lists for json dumping.
-                cw.writerow( ( json.dumps(example.tolist()), json.dumps(label.todense().tolist()[0]) ) )
+                f.write(json.dumps( [example.tolist(), label.nonzero()[1].tolist()] ) + '\n')
 
 if __name__ == '__main__':
     args = argparser()

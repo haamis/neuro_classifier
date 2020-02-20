@@ -1,6 +1,0 @@
-tensorflow-gpu>=2.0.0
-keras<2.3
-sklearn
-tqdm
-xopen
-keras_bert

@@ -1,4 +1,4 @@
-import csv, os
+import os
 try:
     import ujson as json
 except ImportError:
@@ -26,18 +26,12 @@ from sklearn.metrics import precision_recall_fscore_support
 from keras.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from keras.layers import Average, Maximum, Concatenate, Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1D, GlobalMaxPooling1D, Lambda, Reshape, Permute
 from keras.models import Model
-from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
 
 from keras_bert.loader import load_trained_model_from_checkpoint
 from keras_bert import AdamWarmup, calc_train_steps
 from keras_bert.activations import gelu
-from keras_multi_head import MultiHeadAttention, MultiHead
-from keras_self_attention import SeqSelfAttention
-from keras_position_wise_feed_forward import FeedForward
 from keras_transformer import get_encoder_component
-
-#from keras_contrib.callbacks import CyclicLR
 
 
 def argparser():
@@ -63,34 +57,33 @@ def argparser():
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
     return arg_parse.parse_args()
 
-# Read example count from the first row a preprocessed file.
+# Read example count from the first row of a preprocessed file.
 def get_example_count(file_path):
     with xopen(file_path, "rt") as f:
-        cr = csv.reader(f, delimiter="\t")
-        return int(next(cr)[0])
+        return json.loads(f.readline())[0]
 
-# Read the first example from a file and return the length of the label list.
+# Read label dimension from the first row of a preprocessed file.
 def get_label_dim(file_path):
     with xopen(file_path, "rt") as f:
-        cr = csv.reader(f, delimiter="\t")
-        next(cr) # Skip example number row.
-        return len(json.loads(next(cr)[1]))
+        return json.loads(f.readline())[1]
 
 def data_generator(file_path, batch_size, seq_len=512):
     while True:
         with xopen(file_path, "rt") as f:
-            cr = csv.reader(f, delimiter="\t")
-            next(cr) # Skip example number row.
+            _, label_dim = json.loads(f.readline())
             text = []
             labels = []
-            for line in cr:
+            for line in f:
                 if len(text) == batch_size:
                     # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
                     yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
                     text = []
                     labels = []
-                text.append(np.asarray(json.loads(line[0]))[0:seq_len])
-                labels.append(np.asarray(json.loads(line[1])))
+                line = json.loads(line)
+                text.append(np.asarray(line[0])[0:seq_len])
+                label_line = np.zeros(label_dim, dtype='b')
+                label_line[line[1]] = 1
+                labels.append(label_line)
             # Yield what is left as the last batch when file has been read to its end.
             yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
 
@@ -102,17 +95,15 @@ class Metrics(Callback):
         self.best_f1_epoch = 0
         self.best_f1_threshold = 0
 
-        self.all_labels = []
         if args.label_mapping is not None:
             file_name = args.dev_all
         else:
             file_name = args.dev
         with xopen(file_name, "rt") as f:
-            cr = csv.reader(f, delimiter="\t")
-            next(cr) # Skip example number row.
-            for line in tqdm(cr, desc="Reading dev labels"):
-                self.all_labels.append(json.loads(line[1]))
-            self.all_labels = lil_matrix(self.all_labels, dtype='b')
+            example_count, label_dim = json.loads(f.readline())
+            self.all_labels = lil_matrix((example_count, label_dim), dtype='b')
+            for i, line in tqdm(enumerate(f), desc="Reading dev labels"):
+                self.all_labels[i, json.loads(line)[1]] = 1
             print("Dev labels shape:", self.all_labels.shape)
         if args.dev_all is not None:
             with xopen(args.label_mapping) as f:
@@ -146,14 +137,10 @@ class Metrics(Callback):
         print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
 
 
-def loss_fn(y_true, y_pred):
-    return keras.losses.binary_crossentropy(y_true, y_pred) + keras.losses.categorical_hinge(y_true, y_pred)
-
 def build_model(args):
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
-    #config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
     K.set_session(tf.Session(config=config))
 
     print("Building model..")
@@ -161,49 +148,11 @@ def build_model(args):
                                                 training=False, trainable=True,
                                                 seq_len=args.seq_len)
 
-    #slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer("Encoder-12-FeedForward-Norm").output)
-
-    # slices = []
-    # for i in range(1, 13):
-    #     layer_name = "Encoder-" + str(i) + "-FeedForward-Norm"
-    #     cls_slice = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]))(bert.get_layer(layer_name).output)
-    #     # Simple layer to drop masking as it does not pass it along with layer.compute_mask().
-    #     slices.append(Lambda(lambda x: x)(cls_slice))
-
-    # cls_average = Average()(slices)
-    # # This reshape might seem odd, but is required.
-    # slices_shaped = Reshape((768,))(cls_average)
-    # print(slices_shaped.shape)
-
-    # Simple layer to drop masking as it does not pass it along with layer.compute_mask().
-    # drop_mask = Lambda(lambda x: x)(bert.get_layer("Encoder-12-FeedForward-Norm").output)
-
-    # conv1 = Conv1D(250, 25, padding='valid', activation='relu', strides=1)(drop_mask)
-    # conv2 = Conv1D(250, 10, padding='valid', activation='relu', strides=1)(drop_mask)
-    # conv3 = Conv1D(250, 3, padding='valid', activation='relu', strides=1)(drop_mask)
-    # conv4 = Conv1D(250, 1, padding='valid', activation='relu', strides=1)(drop_mask)
-
-    # max_pool1 = GlobalMaxPooling1D()(conv1)
-    # max_pool2 = GlobalMaxPooling1D()(conv2)
-    # max_pool3 = GlobalMaxPooling1D()(conv3)
-    # max_pool4 = GlobalMaxPooling1D()(conv4)
-
-    # concat = Concatenate()([max_pool1, max_pool2, max_pool3, max_pool4])
-
-    #attention_layer = MultiHeadAttention(head_num=12)(drop_mask)
-
     transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
                                             head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
                                             dropout_rate=0.1)
 
-    # transformer_output2 = get_encoder_component(name="Encoder-14", input_layer=transformer_output,
-    #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
-    #                                        dropout_rate=0.1)
-
-    # transformer_output3 = get_encoder_component(name="Encoder-15", input_layer=transformer_output2,
-    #                                        head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
-
-    drop_mask = Lambda(lambda x: x, name="drop_mask")(transformer_output)#(bert.layers[-1].output)#
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(bert.output)
 
     slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
     flatten_CLS = Flatten()(slice_CLS)
@@ -214,24 +163,12 @@ def build_model(args):
     flatten_SEP = Flatten()(slice_SEP)
 
     permute_layer = Permute((2, 1))(drop_mask)
-
-    # all_average = GlobalAveragePooling1D()(drop_mask)
-    #cls_average2 = GlobalAveragePooling1D()(drop_mask)
     permute_average = GlobalAveragePooling1D()(permute_layer)
-
-    # all_maximum =  GlobalMaxPooling1D()(drop_mask)
-    #cls_maximum2 =  GlobalMaxPooling1D()(drop_mask)
     permute_maximum =  GlobalMaxPooling1D()(permute_layer)
-
-    # slice_layer = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 32, -1]), name="slice_128")(drop_mask)
-    # flatten = Flatten()(slice_layer)
     
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
-    # TODO: try concat of avg and max pools of both CLS and the permutation
-
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat)
-    #output_layer = keras.layers.BatchNormalization()(output_layer)
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(flatten_CLS)
 
     model = Model(bert.input, output_layer)
 
@@ -240,7 +177,6 @@ def build_model(args):
         model = multi_gpu_model(template_model, gpus=args.gpus)
 
     callbacks = [Metrics()]
-    # CyclicLR(5e-5, 1e-4, 10000, "triangular2")
 
     if args.patience > -1:
         callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
@@ -253,7 +189,6 @@ def build_model(args):
                                                 warmup_proportion=0.01)
 
     optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
-    # optimizer = Adam(args.lr)
 
     model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=[])
 
@@ -263,21 +198,11 @@ def build_model(args):
     print("Learning rate:", args.lr)
     print("Dropout:", args.dropout)
 
-
     model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
                         steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
                         use_multiprocessing=True, epochs=args.epochs, callbacks=callbacks,
                         validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
                         validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
-
-    # print("Switching to hinge")
-    # model.compile(loss=["hinge"], optimizer=optimizer, metrics=["accuracy"])
-
-    # model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
-    #                     steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
-    #                     use_multiprocessing=True, epochs=args.epochs-args.epochs//10, callbacks=callbacks,
-    #                     validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
-    #                     validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
 
     print("Saving model:", args.output_file)
     if args.gpus > 1:

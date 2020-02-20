@@ -1,4 +1,11 @@
-import sys, json, csv
+import sys, csv
+try:
+    import ujson as json
+except ImportError:
+    import json
+csv.field_size_limit(sys.maxsize)
+
+import networkx
 
 import tensorflow as tf
 import keras.backend as K
@@ -10,7 +17,9 @@ from math import ceil
 from xopen import xopen
 from tqdm import tqdm
 
-from functools import lru_cache
+from functools import lru_cache, partial
+
+from multiprocessing import Pool
 
 from scipy.sparse import lil_matrix
 from sklearn.metrics import precision_recall_fscore_support
@@ -61,16 +70,31 @@ def argparser():
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
     return arg_parse.parse_args()
 
+def propagate(example, graph):
+    for label_index, label_score in enumerate(example):
+        # print(label_score)
+        if label_score > 0.0:
+            # try:
+            # print(networkx.ancestors(graph, label_index))
+            # print(graph.predecessors(label_index))
+            for parent in networkx.ancestors(graph, label_index):
+                if example[parent] < label_score:
+                    # print("set score for", parent)
+                    example[parent] = label_score
+            # except:
+                # pass
+
+    return example
 
 def main(args):
 
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    set_session(tf.Session(config=config))
+    # config = tf.ConfigProto()
+    # config.gpu_options.allow_growth = True
+    # set_session(tf.Session(config=config))
 
-    print("Loading model..")
-    custom_objects = get_custom_objects()
-    model = load_model(args.model, custom_objects=custom_objects)
+    # print("Loading model..")
+    # custom_objects = get_custom_objects()
+    # model = load_model(args.model, custom_objects=custom_objects)
 
     with open(args.labels) as f:
         label_names = json.load(f)
@@ -90,15 +114,10 @@ def main(args):
 
     label_to_index = {k:v for v,k in enumerate(label_names)}
 
-    # from collections import defaultdict
-    # parent_dict = defaultdict(list)
-
-    import networkx
-
     # Build graph for label propagation.
     graph = networkx.DiGraph()
 
-    with xopen("/mnt/extra_raid/sukaew/CAFA4/data/CAFA3/ctrl_sequences/strong/parent_term2term.txt.gz") as f:
+    with xopen("/mnt/extra_raid/sukaew/CAFA4/data/CAFA4_GO/data/parent_term2term.txt.gz") as f:
         cr = csv.reader(f, delimiter='\t')
         next(cr) # skip header
         for line in cr:
@@ -110,30 +129,40 @@ def main(args):
 
     #print(label_names[parent_dict[label_to_index["GO:0032042"]]])
 
-    print("Predicting..")
-    labels_prob = model.predict_generator(data_generator(args.test, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
-                                                    steps=ceil(get_example_count(args.test) / args.eval_batch_size), verbose=1)
-    # This makes json.dumps go faster and increases compression.
-    labels_prob[labels_prob<args.clip_value] = 0
-    print(labels_prob.shape)    
+    with xopen(args.model) as f:
+        cr = csv.reader(f)
+        labels_prob = []
+        for i, line in tqdm(enumerate(cr), desc="Loading predictions"):
+            labels_prob.append(np.asarray(json.loads(line[0])))
+
+    labels_prob = np.asarray(labels_prob)
+    print(labels_prob.shape)
 
     missing_labels = set()
+
+    print("Propagating score..")
+    with Pool(16) as p:
+        labels_prob = p.map(partial(propagate, graph=graph), labels_prob)
+
+    # print(labels_prob)
+
+    labels_prob = np.asarray(labels_prob)
+
+    # for example_index in tqdm(range(labels_prob.shape[0])):
+    #     for label_index, _ in enumerate(labels_prob[example_index]):
+    #         # print(label_index)
+    #         try:
+    #             for parent in networkx.ancestors(graph, label_index):
+    #                 if labels_prob[example_index, parent] < label_index:
+    #                     labels_prob[example_index, parent] = label_index
+    #         except:
+    #             pass
 
     for threshold in np.arange(args.f1_threshold_start, args.f1_threshold_end, args.f1_threshold_step):
         print("Threshold:", threshold)
         labels_pred = np.zeros(labels_prob.shape, dtype='b')
         labels_pred[labels_prob>threshold] = 1
-        for example_index in tqdm(range(labels_pred.shape[0])):
-            parent_indices = set()
-            for label_index in np.where(labels_pred[example_index] == 1)[0]:
-                try:
-                    for parent in networkx.ancestors(graph, label_index):
-                        parent_indices.add(parent)
-                except:
-                    missing_labels.add(label_names[label_index])
-                    #print(label_names[label_index], "not found in graph!")
-                #print(parent_indices)
-            labels_pred[example_index, list(parent_indices)] = 1
+        
         precision, recall, f1, _ = precision_recall_fscore_support(labels_true, labels_pred, average="micro")
         print("Precision:", precision)
         print("Recall:", recall)
@@ -141,19 +170,19 @@ def main(args):
         
     print("Labels not found in parent_term2term:", missing_labels)
 
-    pos_labels = []
-    for example in labels_prob:
-        example_labels = []
-        for i, label_prob in enumerate(example):
-            if label_prob > args.output_labels_threshold:
-                #print("Label found!")
-                example_labels.append(label_names[i])
-        pos_labels.append(example_labels)
+    # pos_labels = []
+    # for example in labels_prob:
+    #     example_labels = []
+    #     for i, label_prob in enumerate(example):
+    #         if label_prob > args.output_labels_threshold:
+    #             #print("Label found!")
+    #             example_labels.append(label_names[i])
+    #     pos_labels.append(example_labels)
 
     with xopen(args.output_file, "wt") as f:
         cw_out = csv.writer(f)
-        for prob, labels in tqdm(zip(labels_prob, pos_labels), desc="Writing " + args.output_file):
-            cw_out.writerow( (json.dumps(prob.tolist()), json.dumps(labels)) )
+        for prob in tqdm(labels_prob, desc="Writing " + args.output_file):
+            cw_out.writerow(json.dumps(prob.tolist()))
 
 if __name__ == "__main__":
     main(argparser())
