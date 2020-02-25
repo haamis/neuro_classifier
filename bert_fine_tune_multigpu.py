@@ -82,7 +82,7 @@ def data_generator(file_path, batch_size, seq_len=512):
                 line = json.loads(line)
                 # First sublist is token ids.
                 text.append(np.asarray(line[0])[0:seq_len])
-                # text.append(np.zeros(seq_len))
+
                 # Second sublist is positive label indices.
                 label_line = np.zeros(label_dim, dtype='b')
                 label_line[line[1]] = 1
