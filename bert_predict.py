@@ -108,7 +108,7 @@ def argparser():
     arg_parse.add_argument("--output_file", help="File to which save the prediction results, .gz file extension recommended for compression!", metavar="FILE", default="predict_output.txt.gz")
     arg_parse.add_argument("--output_labels_threshold", help="Positive label prediction threshold for output file.", metavar="FLOAT", default=0.5, type=float)
     arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length.", metavar="INT", default=512, type=int)
-    arg_parse.add_argument("--clip_value", help="Set scores lower than this to 0.", metavar="FLOAT", default=1e-4, type=float)
+    arg_parse.add_argument("--clip_value", help="Set scores lower than this to 0.", metavar="FLOAT", default=0.01, type=float)
     arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
     arg_parse.add_argument("--eval_batch_size", help="Batch size for eval calls. Default value is the Keras default.", metavar="INT", default=32, type=int)
     return arg_parse.parse_args()
