@@ -80,7 +80,10 @@ def data_generator(file_path, batch_size, seq_len=512):
                     text = []
                     labels = []
                 line = json.loads(line)
+                # First sublist is token ids.
                 text.append(np.asarray(line[0])[0:seq_len])
+                # text.append(np.zeros(seq_len))
+                # Second sublist is positive label indices.
                 label_line = np.zeros(label_dim, dtype='b')
                 label_line[line[1]] = 1
                 labels.append(label_line)
@@ -146,13 +149,13 @@ def build_model(args):
     print("Building model..")
     bert = load_trained_model_from_checkpoint(args.bert_config, args.init_checkpoint,
                                                 training=False, trainable=True,
-                                                seq_len=args.seq_len)
+                                                seq_len=args.seq_len, dropout_rate=args.dropout)
 
     transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
                                             head_num=12, hidden_dim=3072, feed_forward_activation=gelu,
-                                            dropout_rate=0.1)
+                                            dropout_rate=args.dropout)
 
-    drop_mask = Lambda(lambda x: x, name="drop_mask")(bert.output)
+    drop_mask = Lambda(lambda x: x, name="drop_mask")(transformer_output)
 
     slice_CLS = Lambda(lambda x: K.slice(x, [0, 0, 0], [-1, 1, -1]), name="slice_CLS")(drop_mask)
     flatten_CLS = Flatten()(slice_CLS)
@@ -168,7 +171,7 @@ def build_model(args):
     
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
-    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(flatten_CLS)
+    output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat)
 
     model = Model(bert.input, output_layer)
 

@@ -18,8 +18,7 @@ from scipy.sparse import csr_matrix
 from sklearn.preprocessing import MultiLabelBinarizer
 from tqdm import tqdm
 from xopen import xopen
-from bert import tokenization
-import longestfirst
+from tokenizers import BertWordPieceTokenizer
 
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
@@ -65,20 +64,10 @@ def eng_reader(file):
         labels.append(line[0].split(' '))
     return examples, labels
 
-def mesh_xml_reader(csv_reader):
-    examples = []
-    labels = []
-    csv_reader = csv.reader(file, delimiter="\t")
-    for line in tqdm(csv_reader, desc="Reading file"):
-        examples.append(line[0])
-        labels.append(line[1].split(','))
-    return examples, labels
-
 input_readers = {
     "bioasq" : bioasq_reader,
     "cafa" : cafa_reader,
     "eng" : eng_reader,
-    "mesh_xml" : mesh_xml_reader,
 }
 
 def tokenize(text, tokenizer, maxlen=512):
@@ -94,34 +83,21 @@ def preprocess_data(args):
     examples_list = []
     labels_list = []
 
-    # Create child processes before we load a bunch of data.
-    with Pool(args.processes) as p:
-        for input_file in args.input_files:
+    tokenizer = BertWordPieceTokenizer(args.vocab, lowercase=args.do_lower_case)
+    tokenizer.enable_padding(max_length=args.seq_len)
+    tokenizer.enable_truncation(max_length=args.seq_len)
 
-            with xopen(input_file, 'rt') as f:
+    for input_file in args.input_files:
 
-                examples, labels = input_readers[args.task](f)
+        with xopen(input_file, 'rt') as f:
 
-                if args.longest_first_tokenization:
-                    tokenizer = longestfirst.Tokenizer.load(args.vocab)
-                else:
-                    tokenizer = tokenization.FullTokenizer(args.vocab, do_lower_case=args.do_lower_case)
+            examples, labels = input_readers[args.task](f)
 
-                print("Tokenizing..")
-                examples = p.map(partial(tokenize, tokenizer=tokenizer, maxlen=args.seq_len), examples)
-
-                print("Vectorizing..")
-                if args.longest_first_tokenization:
-                    # Make sure we get the vocab in the same way for the tokenization
-                    vocab = tokenization.FullTokenizer(args.vocab).vocab
-                else:
-                    vocab = tokenizer.vocab
-                examples = p.map(partial(vectorize, vocab=vocab, maxlen=args.seq_len), examples)
-
-                examples_list.append(examples)
-                labels_list.append(labels)
-
-    # Child processes terminated here.
+            
+            print("Tokenizing..")
+            examples = tokenizer.encode_batch(examples)
+            examples_list.append(examples)
+            labels_list.append(labels)
 
     if args.top_n_labels > 0:
         print("Processing all labels first for mapping..")
@@ -141,8 +117,6 @@ def preprocess_data(args):
     # Save list of partial -> full mapping if doing top N labels.
     if args.top_n_labels > 0:
         label_mapping = np.where(np.in1d(mlb_full.classes_, mlb.classes_))[0].tolist()
-        #for label in mlb.classes_:
-        #    label_mapping.append(np.where(mlb_full.classes_ == label)[0])
         with open(args.label_mapping, "wt") as f:
             json.dump(label_mapping, f)
         # Also save the full labels.
@@ -158,15 +132,16 @@ def preprocess_data(args):
         if input_file[-3:] == ".gz":
             # Split twice to get rid of two file extensions, e.g. ".tsv.gz"
             file_basename = os.path.splitext(file_basename)[0]
+        if args.do_lower_case:
+            file_basename = "-".join([file_basename, "uncased"])
         if args.top_n_labels > 0:
-            file_name = file_basename + "-top-" + str(args.top_n_labels) + "-processed.jsonl.gz"
-        else:
-            file_name = file_basename + "-processed.jsonl.gz"
+            file_basename = "-".join([file_basename, "-top-" + str(args.top_n_labels)])
+        file_name = file_basename + "-processed.jsonl.gz"
         with xopen(file_name, "wt") as f:
             # Write the shape as the first row, useful for the finetuning.
             f.write(json.dumps(labels_list[i].shape) + '\n')
             for example, label in tqdm(zip(examples_list[i], labels_list[i]), desc="Writing " + file_name):
-                f.write(json.dumps( [example.tolist(), label.nonzero()[1].tolist()] ) + '\n')
+                f.write(json.dumps( [example.ids, label.nonzero()[1].tolist()] ) + '\n')
 
 if __name__ == '__main__':
     args = argparser()
