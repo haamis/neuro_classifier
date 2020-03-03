@@ -25,75 +25,38 @@ from keras.models import load_model
 
 from keras_bert import get_custom_objects
 
-# Read example count from the first row a preprocessed file.
+# Read example count from the first row of a preprocessed file.
 def get_example_count(file_path):
     with xopen(file_path, "rt") as f:
-        cr = csv.reader(f, delimiter="\t")
-        return int(next(cr)[0])
+        return json.loads(f.readline())[0]
 
-# Read the first example from a file and return the length of the label list.
+# Read label dimension from the first row of a preprocessed file.
 def get_label_dim(file_path):
     with xopen(file_path, "rt") as f:
-        cr = csv.reader(f, delimiter="\t")
-        next(cr) # Skip example number row.
-        return len(json.loads(next(cr)[1]))
+        return json.loads(f.readline())[1]
 
 def data_generator(file_path, batch_size, seq_len=512):
     while True:
         with xopen(file_path, "rt") as f:
-            cr = csv.reader(f, delimiter="\t")
-            next(cr) # Skip example number row.
+            _, label_dim = json.loads(f.readline())
             text = []
             labels = []
-            for line in cr:
+            for line in f:
                 if len(text) == batch_size:
                     # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
                     yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
                     text = []
                     labels = []
-                text.append(np.asarray(json.loads(line[0]))[0:seq_len])
-                labels.append(np.asarray(json.loads(line[1])))
+                line = json.loads(line)
+                # First sublist is token ids.
+                text.append(np.asarray(line[0])[0:seq_len])
+
+                # Second sublist is positive label indices.
+                label_line = np.zeros(label_dim, dtype='b')
+                label_line[line[1]] = 1
+                labels.append(label_line)
             # Yield what is left as the last batch when file has been read to its end.
             yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
-
-def data_generator_features(file_path, batch_size, seq_len=512, features=None):
-    while True:
-        # features_f = xopen(features, "rt")
-        # with xopen(file_path, "rt") as f:
-        #     cr = csv.reader(f, delimiter="\t")
-        #     cr_features = csv.reader(features_f, delimiter="\t")
-        #     next(cr) # Skip example number row.
-        #     text = []
-        #     feature_labels = []
-        #     labels = []
-        #     for line, line_features in zip(cr, cr_features):
-        #         if len(text) == batch_size:
-        #             # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-        #             yield ([np.asarray(text), np.zeros_like(text), np.asarray(feature_labels)], np.asarray(labels))
-        #             text = []
-        #             feature_labels = []
-        #             labels = []
-        #         text.append(np.asarray(json.loads(line[0]))[0:seq_len])
-        #         feature_labels.append(np.asarray(json.loads(line_features[0])))
-        #         labels.append(np.asarray(json.loads(line[1])))
-        #     # Yield what is left as the last batch when file has been read to its end.
-        #     yield ([np.asarray(text), np.zeros_like(text), np.asarray(feature_labels)], np.asarray(labels))
-        label_dim = get_label_dim(file_path)
-        with xopen(file_path, "rt") as f:
-            cr = csv.reader(f, delimiter="\t")
-            next(cr) # Skip example number row.
-            text = []
-            labels = []
-            for line in cr:
-                if len(text) == batch_size:
-                    # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
-                    yield ([np.asarray(text), np.zeros_like(text), np.zeros((len(text), label_dim))], np.asarray(labels))
-                    text = []
-                    labels = []
-                text.append(np.asarray(json.loads(line[0]))[0:seq_len])
-                labels.append(np.asarray(json.loads(line[1])))
-            # Yield what is left as the last batch when file has been read to its end.
-            yield ([np.asarray(text), np.zeros_like(text), np.zeros((len(text), label_dim))], np.asarray(labels))
 
 def argparser():
     arg_parse = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
@@ -132,19 +95,15 @@ def main(args):
             label_mapping = json.load(f)
 
     with xopen(args.test, "rt") as f:
-        cr = csv.reader(f, delimiter="\t")
-        example_num = int(next(cr)[0]) # Number of examples is stored in the first row.
-        labels_true = lil_matrix((example_num, len(label_names)), dtype='b')
-        for i, line in tqdm(enumerate(cr), desc="Loading test data"):
-            labels_true[i] = json.loads(line[1])
+        # cr = csv.reader(f, delimiter="\t")
+        example_num, label_dim = json.loads(f.readline()) # Read dimensions from the the first row.
+        labels_true = lil_matrix((example_num, label_dim), dtype='b')
+        for i, line in tqdm(enumerate(f), desc="Loading test data"):
+            labels_true[i,json.loads(line)[1]] = 1
 
     print("Predicting..")
     labels_prob = model.predict_generator(data_generator(args.test, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.test) / args.eval_batch_size), verbose=1)
-
-    # labels_prob = model.predict_generator(data_generator_features(args.test, args.eval_batch_size, seq_len=args.seq_len, features=args.features_test), use_multiprocessing=True,
-    #                                                 steps=ceil(get_example_count(args.test) / args.eval_batch_size), verbose=1)
-    
 
     # If we get 2 matrices, just take the probabilites and not the label amount.
     if labels_prob.shape[0] == 2:
