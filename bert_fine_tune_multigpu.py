@@ -168,7 +168,7 @@ def build_model(args):
     permute_layer = Permute((2, 1))(drop_mask)
     permute_average = GlobalAveragePooling1D()(permute_layer)
     permute_maximum =  GlobalMaxPooling1D()(permute_layer)
-    
+
     concat = Concatenate()([permute_average, permute_maximum, flatten_CLS, flatten_SEP])
 
     output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(concat)
@@ -177,7 +177,8 @@ def build_model(args):
 
     if args.gpus > 1:
         template_model = model
-        model = multi_gpu_model(template_model, gpus=args.gpus)
+        # Set cpu_merge=False for better performance on NVLink connected GPUs.
+        model = multi_gpu_model(template_model, gpus=args.gpus, cpu_merge=False)
 
     callbacks = [Metrics()]
 

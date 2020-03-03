@@ -149,7 +149,7 @@ def preprocess_data(args):
                 # Write the shape as the first row, useful for the finetuning.
                 out_f.write(json.dumps( (examples_per_file[input_file], len(label_counter)) ) + '\n')
 
-                batch_size = min(examples_per_file[input_file], args.processes*1000)
+                batch_size = min(examples_per_file[input_file], args.processes*100)
                 example_batch = []
                 labels_batch = []
 
