@@ -13,6 +13,7 @@ import tensorflow as tf
 import keras
 import keras.backend as K
 import numpy as np
+import horovod.keras as hvd
 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from math import ceil
@@ -50,7 +51,7 @@ def argparser():
     arg_parse.add_argument("--output_file", help="Path to which save the finetuned model. Checkpoints will have the format `<output_file>.checkpoint-<epoch>`.", metavar="PATH", default="model.h5")
     arg_parse.add_argument("--seq_len", help="BERT's maximum sequence length.", metavar="INT", default=512, type=int)
     # arg_parse.add_argument("--dropout", help="Dropout rate between BERT and the decision layer.", metavar="FLOAT", default=0.1, type=float)
-    arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
+    # arg_parse.add_argument("--gpus", help="Number of GPUs to use.", metavar="INT", default=1, type=int)
     arg_parse.add_argument("--patience", help="Patience of early stopping. Early stopping disabled if -1.", metavar="INT", default=-1, type=int)
     arg_parse.add_argument("--checkpoint_interval", help="Interval between checkpoints. 1 for every epoch, 0 to disable.", metavar="INT", default=0, type=int)
     arg_parse.add_argument("--threshold_start", help="Positive label prediction threshold range start.", metavar="FLOAT", default=0.1, type=float)
@@ -73,14 +74,29 @@ def get_label_dim(file_path):
     with xopen(file_path, "rt") as f:
         return json.loads(f.readline())[1]
 
-def data_generator(file_path, batch_size, seq_len=512):
+def data_generator(file_path, batch_size, seq_len=512, predict=False):
+    # Trick the code into thinking we're only running 1 process for prediction when running `Metrics`.
+    if predict:
+        size = 1
+    else:
+        size = hvd.size()
+    total_batch_size = batch_size * size
+    print(total_batch_size)
+    rank = hvd.rank()
+    print(rank)
+    range_start = batch_size * rank
+    range_end = range_start + batch_size
+    print(range_start, range_end)
     while True:
         with xopen(file_path, "rt") as f:
             _, label_dim = json.loads(f.readline())
             text = []
             labels = []
             for line in f:
-                if len(text) == batch_size:
+                if len(text) == total_batch_size:
+                    text = text[range_start:range_end]
+                    labels = labels[range_start:range_end]
+                    print(text[0])
                     # Fun fact: the 2 inputs must be in a list, *not* a tuple. Why.
                     yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
                     text = []
@@ -94,20 +110,19 @@ def data_generator(file_path, batch_size, seq_len=512):
                 label_line[line[1]] = 1
                 labels.append(label_line)
             # Yield what is left as the last batch when file has been read to its end.
+            # Split the remaining examples, duplicating with `ceil()` if they don't split evenly.
+            leftover_batch_start = ceil(len(text) / size) * rank
+            leftover_batch_end = leftover_batch_start + ceil(len(text) / size)
+            text = text[leftover_batch_start:leftover_batch_end]
+            labels = labels[leftover_batch_start:leftover_batch_end]
             yield ([np.asarray(text), np.zeros_like(text)], np.asarray(labels))
+
 
 class Metrics(Callback):
 
     def __init__(self, model):
-
-        if args.print_lr:
-            t = K.cast(model.optimizer.iterations, K.floatx()) + 1
-            self.lr = K.switch(
-                t <= model.optimizer.warmup_steps,
-                model.optimizer.lr * (t / model.optimizer.warmup_steps),
-                model.optimizer.min_lr + (model.optimizer.lr - model.optimizer.min_lr) * (1.0 - K.minimum(t, model.optimizer.decay_steps) / model.optimizer.decay_steps),
-            )
         
+        print("Initing metrics")
         self.best_f1 = 0
         self.best_f1_epoch = 0
         self.best_f1_threshold = 0
@@ -128,7 +143,7 @@ class Metrics(Callback):
 
     def on_epoch_end(self, epoch, logs):
         print("Predicting probabilities..")
-        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len), use_multiprocessing=True,
+        labels_prob = self.model.predict_generator(data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len, predict=True), use_multiprocessing=True,
                                                     steps=ceil(get_example_count(args.dev) / args.eval_batch_size), verbose=1)
         if args.label_mapping is not None:
             full_labels_prob = np.zeros(self.all_labels.shape)
@@ -174,14 +189,28 @@ class Metrics(Callback):
 
         print("Current F_max:", self.best_f1, "epoch", self.best_f1_epoch+1, "threshold", self.best_f1_threshold, '\n')
 
+
+class PrintLR(Callback):
+    def __init__(self, model):
+        print("Initing lrprint")
+        t = K.cast(model.optimizer.iterations, K.floatx()) + 1
+        self.lr = K.switch(
+            t <= model.optimizer.warmup_steps,
+            model.optimizer.lr * (t / model.optimizer.warmup_steps),
+            model.optimizer.min_lr + (model.optimizer.lr - model.optimizer.min_lr) * (1.0 - K.minimum(t, model.optimizer.decay_steps) / model.optimizer.decay_steps),
+        )
+    
     def on_batch_end(self, batch, logs):
-        if args.print_lr:
-            print(" - lr:", K.eval(self.lr), end='')
+        print(" - lr:", K.eval(self.lr), end='')
+
 
 def build_model(args):
 
+    hvd.init()
+
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+    config.gpu_options.visible_device_list = str(hvd.local_rank())
     K.set_session(tf.Session(config=config))
 
     if args.load_model:
@@ -196,6 +225,7 @@ def build_model(args):
         bert = load_trained_model_from_checkpoint(args.bert_config, args.init_checkpoint,
                                                     training=False, trainable=True,
                                                     seq_len=args.seq_len)
+        print("BERT loaded", hvd.rank())
 
         transformer_output = get_encoder_component(name="Encoder-13", input_layer=bert.layers[-1].output,
                                                 head_num=12, hidden_dim=3072, feed_forward_activation=gelu)
@@ -219,6 +249,7 @@ def build_model(args):
         output_layer = Dense(get_label_dim(args.train), activation='sigmoid', name="label_out")(flatten_CLS)
 
         model = Model(bert.input, output_layer)
+        print("model created", hvd.rank())
         
         total_steps, warmup_steps =  calc_train_steps(num_example=get_example_count(args.train),
                                                     batch_size=args.batch_size, epochs=args.epochs,
@@ -226,40 +257,42 @@ def build_model(args):
 
         # optimizer = AdamWarmup(total_steps, warmup_steps, lr=args.lr)
         optimizer = keras.optimizers.Adam(lr=args.lr)
+        optimizer = hvd.DistributedOptimizer(optimizer)
 
         model.compile(loss=["binary_crossentropy"], optimizer=optimizer, metrics=[])
+        print("model compiled", hvd.rank())
 
-    if args.gpus > 1:
-        template_model = model
-        # Set cpu_merge=False for better performance on NVLink connected GPUs.
-        model = multi_gpu_model(template_model, gpus=args.gpus, cpu_merge=False)
-        # TODO: need to compile this model as well when doing multigpu!
+    callbacks = [hvd.callbacks.BroadcastGlobalVariablesCallback(0)]
 
-    callbacks = [Metrics(model)]
+    if hvd.rank() == 0:
+        if args.checkpoint_interval > 0:
+            callbacks.append(ModelCheckpoint(args.output_file + ".checkpoint-{epoch}",  period=args.checkpoint_interval))
+
+        if args.print_lr:
+            callbacks.append(PrintLR(model))
+
+        callbacks.append(Metrics(model))
+
+        print(model.summary(line_length=118))
+        print("Number of GPUs in use:", hvd.size())
+        print("Batch size:", args.batch_size)
+        print("Learning rate:", K.eval(model.optimizer.lr))
+        # print("Dropout:", args.dropout)
 
     if args.patience > -1:
         callbacks.append(EarlyStopping(patience=args.patience, verbose=1))
-
-    if args.checkpoint_interval > 0:
-        callbacks.append(ModelCheckpoint(args.output_file + ".checkpoint-{epoch}",  period=args.checkpoint_interval))
-
-
-    print(model.summary(line_length=118))
-    print("Number of GPUs in use:", args.gpus)
-    print("Batch size:", args.batch_size)
-    print("Learning rate:", K.eval(model.optimizer.lr))
-    # print("Dropout:", args.dropout)
+    
+    print("Beginning fit", hvd.rank())
 
     model.fit_generator(data_generator(args.train, args.batch_size, seq_len=args.seq_len),
-                        steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size ),
+                        steps_per_epoch=ceil( get_example_count(args.train) / args.batch_size / hvd.size() ),
                         use_multiprocessing=True, epochs=args.epochs, callbacks=callbacks,
                         validation_data=data_generator(args.dev, args.eval_batch_size, seq_len=args.seq_len),
-                        validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size ))
+                        validation_steps=ceil( get_example_count(args.dev) / args.eval_batch_size / hvd.size() ),
+                        verbose=1 if hvd.rank() == 0 else 0)
 
-    print("Saving model:", args.output_file)
-    if args.gpus > 1:
-        template_model.save(args.output_file)
-    else:
+    if hvd.rank() == 0:
+        print("Saving model:", args.output_file)
         model.save(args.output_file)
 
 if __name__ == "__main__":
